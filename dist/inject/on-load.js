@@ -1,0 +1,1 @@
+browser.runtime.sendMessage({type:"RUN_INJECT_CODES",url:location.href}).catch(()=>{});

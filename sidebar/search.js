@@ -7,7 +7,6 @@ import {
   nodeHasExactSearchMatch,
   nodeSearchScore,
 } from "../lib/link-search.js";
-import { flattenLinkNodes } from "../lib/link-model.js";
 
 export { normalizeSearchQuery };
 
@@ -19,6 +18,7 @@ export function createSearchController({
   setActiveSectionName,
   sectionTabKey,
   renderAll,
+  getFlatLeaves,
 }) {
   let searchQuery = "";
 
@@ -26,11 +26,10 @@ export function createSearchController({
     if (!query) {
       return false;
     }
-    return flattenLinkNodes(
-      section.children,
-      section.match,
-      section.name
-    ).some((node) => nodeHasExactSearchMatch(node, query));
+    const leaves = (getFlatLeaves?.() || []).filter(
+      (leaf) => leaf.sectionName === section.name
+    );
+    return leaves.some((leaf) => nodeHasExactSearchMatch(leaf.node, query));
   }
 
   function findSectionWithExactMatch(query) {
@@ -74,6 +73,7 @@ export function createSearchController({
         node,
         score: getScore(node, query),
       }))
+      .filter((entry) => entry.score > 0)
       .sort(
         (a, b) =>
           b.score - a.score ||
@@ -196,7 +196,6 @@ export function createSearchController({
     maybeSwitchSectionForExactMatch,
     sortNodesBySearchScore,
     getSearchRowHighlight,
-    getScriptSearchRowHighlight: getSearchRowHighlight,
     nodeSearchScore,
     focusSearchInput,
     clearSearch,

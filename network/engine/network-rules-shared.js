@@ -16,9 +16,14 @@ export {
   PRIVILEGED_REQUEST_HEADER_PREFIX,
   rewritePrivilegedRequestHeaders,
 };
-export const NETWORK_MAIN_HOOK_SCRIPT_ID = "complex-linker-network-hook-main";
-export const NETWORK_LOG_BRIDGE_SCRIPT_ID = "complex-linker-network-log-bridge";
-export const NETWORK_EARLY_HOOK_SCRIPT_ID = "complex-linker-network-early-hook";
+export const NETWORK_MAIN_HOOK_SCRIPT_ID = "hackery-lab-network-hook-main";
+export const NETWORK_LOG_BRIDGE_SCRIPT_ID = "hackery-lab-network-log-bridge";
+export const NETWORK_EARLY_HOOK_SCRIPT_ID = "hackery-lab-network-early-hook";
+export const LEGACY_NETWORK_CONTENT_SCRIPT_IDS = [
+  "complex-linker-network-hook-main",
+  "complex-linker-network-log-bridge",
+  "complex-linker-network-early-hook",
+];
 const NETWORK_LOG_LIMIT = 100;
 
 export const NETWORK_ACTIONS = ["block", "redirect", "modify", "mock"];
@@ -61,7 +66,7 @@ export function createEmptyRule() {
     name: "New rule",
     enabled: true,
     priority: 100,
-    pageUrlPattern: "",
+    pageUrlPattern: "", //TODO: auto-fill with current page host and wildcards
     pageUrlPatternIsRegex: false,
     requestUrlPattern: "",
     requestUrlPatternIsRegex: false,
@@ -88,6 +93,8 @@ export function createEmptyRule() {
       mockStatus: 200,
       mockStatusText: "OK",
       mockBody: "",
+      cspSeed: "",
+      cspMode: "",
     },
   };
 }
@@ -101,9 +108,8 @@ export const FILTER_PATTERN_FIELDS = [
 ];
 
 /**
- * Normalize legacy `w:` patterns and missing isRegex flags onto the checkbox model.
- * Empty/default is wildcard; bare legacy patterns (no `w:`) stay regex.
- * Drops removed pageHostPattern / hostPattern fields.
+ * Normalize missing isRegex flags onto the checkbox model.
+ * Empty/default is wildcard. Drops removed pageHostPattern / hostPattern fields.
  * @param {object} rule Network rule.
  * @returns {object} Rule with explicit pattern-mode flags.
  */
@@ -117,12 +123,7 @@ export function normalizeRulePatternModes(rule) {
   delete next.hostPattern;
   delete next.hostPatternIsRegex;
   for (const [patternKey, flagKey] of FILTER_PATTERN_FIELDS) {
-    let value = next[patternKey] == null ? "" : String(next[patternKey]);
-    if (value.startsWith("w:")) {
-      next[patternKey] = value.slice(2);
-      next[flagKey] = false;
-      continue;
-    }
+    const value = next[patternKey] == null ? "" : String(next[patternKey]);
     if (typeof next[flagKey] === "boolean") {
       continue;
     }

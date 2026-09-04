@@ -3,6 +3,7 @@ import {
   saveParamValue,
   validateParamValues,
 } from "../lib/activate-link.js";
+import { reportActivity } from "../lib/link-inspect.js";
 import { matchBehavior } from "../lib/link-behaviors.js";
 import {
   getEditableValueDefs,
@@ -13,9 +14,12 @@ import {
 } from "../lib/link-model.js";
 import {
   coerceScriptletNavigationUrl,
-  resolveUrlAction,
+  resolveUrlActionTraced,
 } from "../lib/navigation-shared.js";
-import { executeScriptletWithBindings } from "../lib/scriptlet-inject.js";
+import {
+  compileScriptletSource,
+  executeScriptletWithBindings,
+} from "../lib/scriptlet-inject.js";
 import { getTargetTab } from "../lib/tab-target.js";
 
 async function resolveCopyText(node, row) {
@@ -57,44 +61,59 @@ async function resolveCopyText(node, row) {
 
   if (behavior.id === "open-from-script") {
     const matchPattern = node.match ?? null;
-    const { tab, origin } = await getTargetTab(matchPattern);
-    // Nav scripts read page globals (g_form, g_list, GlideList2) and the page
-    // DOM, so only the page can produce the URL. Same injection path as
-    // activation, so copying succeeds exactly when Run does.
-    const returnValue = await executeScriptletWithBindings(
-      tab.id,
-      node.code,
-      paramValues
-    );
-    const url = coerceScriptletNavigationUrl(returnValue, tab, origin);
-    if (!url) {
+    const { tab, origin } = await getTargetTab(matchPattern, {
+      excludePattern: node.exclude ?? null,
+    });
+    // Nav scripts read page globals and the page DOM, so only the page can
+    // produce the URL. Same injection path as activation, so copying succeeds
+    // exactly when Run does.
+    const outcome = await executeScriptletWithBindings(tab.id, node.code, paramValues, {
+      frames: node.frames,
+      sandbox: node.sandbox,
+    });
+    const urls = [];
+    for (const item of outcome.successes) {
+      const url = coerceScriptletNavigationUrl(item.value, tab, origin);
+      if (url) {
+        urls.push(url);
+      }
+    }
+    if (!urls.length) {
       throw new Error("Navigation script did not resolve to a URL.");
     }
-    return url;
+    const copied = urls.join("\n");
+    return {
+      text: copied,
+      someFailed: outcome.someFailed,
+      behaviorId: behavior.id,
+      paramValues,
+    };
   }
 
   if (behavior.id === "run") {
-    const code = node.code || "";
-    // Injection binds params as function arguments (see executeScriptletWithBindings);
-    // pasted code has no such scope, so emit them as declarations ahead of the snippet.
-    const declarations = runtimeDefs
-      .filter((def) => /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(def.name))
-      .map(
-        (def) =>
-          `var ${def.name} = ${JSON.stringify(paramValues[def.name] ?? "")};`
-      );
-    return declarations.length ? `${declarations.join("\n")}\n${code}` : code;
+    return {
+      text: compileScriptletSource(node.code || "", paramValues),
+      behaviorId: behavior.id,
+      paramValues,
+    };
   }
 
   const matchPattern = node.match ?? null;
-  const { tab, origin } = await getTargetTab(matchPattern);
-  const url = await resolveUrlAction(node, tab, origin, paramValues);
+  const { tab, origin } = await getTargetTab(matchPattern, {
+    excludePattern: node.exclude ?? null,
+  });
+  const traced = await resolveUrlActionTraced(node, tab, origin, paramValues);
 
-  if (url === null) {
+  if (traced.url === null) {
     throw new Error("Could not derive URL from the current tab.");
   }
 
-  return url;
+  return {
+    text: traced.url,
+    behaviorId: behavior.id,
+    paramValues,
+    derivation: traced,
+  };
 }
 
 function writeClipboardText(text) {
@@ -135,8 +154,28 @@ export function createCopyLink({ showMessage, hideMessage }) {
   return function copyLink(node, row = null) {
     hideMessage();
 
-    writeClipboardTextFromPromise(resolveCopyText(node, row))
-      .then(() => showMessage("Copied to clipboard."))
+    resolveCopyText(node, row)
+      .then((result) => {
+        const { text, behaviorId, paramValues, derivation } = result;
+        const someFailed = Boolean(result.someFailed);
+        return writeClipboardTextFromPromise(Promise.resolve(text)).then(() => {
+          void reportActivity({
+            trigger: "copy-link",
+            name: node.name,
+            linkKey: linkStorageKey(node),
+            behaviorId,
+            outcome: someFailed ? "ran-partial" : "ran",
+            copied: String(text || "").slice(0, 500),
+            paramValues,
+            derivation: derivation || null,
+          });
+          if (someFailed) {
+            showMessage("failed in some frames");
+            return;
+          }
+          showMessage("Copied to clipboard.");
+        });
+      })
       .catch((error) => showMessage(error.message || String(error)));
   };
 }

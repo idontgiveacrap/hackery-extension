@@ -1,7 +1,7 @@
 /**
  * Public plugin facade for network rules.
  *
- * Host contract (Complex Linker today):
+ * Host contract (Hackery Lab today):
  * 1. Import this module from the ESM background entry.
  * 2. Call init({ onRulesChanged }) during extension init.
  * 3. Merge createMessageHandlers() into the runtime message router.

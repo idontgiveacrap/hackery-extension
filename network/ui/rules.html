@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <title>Network Rules</title>
+    <link rel="stylesheet" href="../../lib/ui-theme.css" />
+    <link rel="stylesheet" href="../../lib/ui-message.css" />
+    <link rel="stylesheet" href="../../lib/network-arm-control.css" />
     <link rel="stylesheet" href="rules.css" />
     <link rel="stylesheet" href="../../lib/codemirror-fields.css" />
   </head>
@@ -25,13 +28,10 @@
         </span>
       </h1>
       <p class="page-header-desc">
-        fetch/XHR + webRequest; re-injects on save. Global on/off: sidebar Network toggle.
+        fetch/XHR + webRequest; re-injects on save. Arm here or in the sidebar — the countdown starts once a rule is enabled.
       </p>
       <div class="page-header-actions">
-        <label class="toggle-field">
-          <input id="rules-enabled" type="checkbox" checked />
-          <span>Enabled</span>
-        </label>
+        <div id="network-arm"></div>
         <select id="rule-template-select" class="template-select" title="Insert a preset rule from network/data/network-rule-templates.json">
           <option value="">Insert from template…</option>
         </select>
@@ -148,7 +148,7 @@
               <input
                 id="rule-page-url-pattern"
                 type="text"
-                placeholder="*/now/nav/*"
+                placeholder="*/app/*"
                 spellcheck="false"
               />
             </div>
@@ -163,7 +163,7 @@
               <input
                 id="rule-request-url-pattern"
                 type="text"
-                placeholder="*/api/now/table/*"
+                placeholder="*/api/v1/items/*"
                 spellcheck="false"
               />
             </div>
@@ -178,7 +178,7 @@
               <input
                 id="rule-body-pattern"
                 type="text"
-                placeholder="*sysparm_query=*active=true*"
+                placeholder="*q=*status=open*"
                 spellcheck="false"
               />
             </div>
@@ -434,7 +434,7 @@
               XHR URL) is not implemented. Fetch/XHR header mods for
               <code>Cookie</code>, <code>Origin</code>, and
               <code>Referer</code> use a dummy
-              <code>x-complexlinker-*</code> prefix in the page hook; webRequest
+              <code>x-hackerylab-*</code> prefix in the page hook; webRequest
               rewrites them to the real names before the request is sent.
               Other resource types get header rules directly via webRequest.
             </p>

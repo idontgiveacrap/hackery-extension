@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hackery Lab</title>
+    <link rel="stylesheet" href="../lib/ui-theme.css" />
+    <link rel="stylesheet" href="../lib/ui-message.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+  </head>
+  <body class="sidebar">
+    <header>
+      <div class="header-row">
+        <h1>Hackery Lab</h1>
+        <div class="header-toggles">
+          <label
+            id="inject-on-load-enabled-label"
+            class="header-toggle"
+            title="When off, no on-load scriptlets run (per-link checkboxes are ignored)"
+          >
+            <input id="inject-on-load-enabled" type="checkbox" checked />
+            On load
+          </label>
+          <label
+            id="network-hooks-enabled-label"
+            class="header-toggle"
+            title="When off, network rules and fetch/XHR hooks do not run. Edit rules in DevTools → Network Rules."
+          >
+            <input id="network-hooks-enabled" type="checkbox" checked />
+            Network
+          </label>
+          <label
+            id="csp-disable-label"
+            class="csp-disable-label"
+            title="Strip CSP and cross-origin isolation headers, plus meta CSP tags, for this tab on hard reload"
+          >
+            <input id="csp-disable-checkbox" type="checkbox" />
+            Disable CSP
+          </label>
+        </div>
+      </div>
+      <p id="active-tab-status" class="active-tab-status"></p>
+      <label class="sidebar-search-field">
+        <span class="visually-hidden">Search links</span>
+        <input
+          id="search-input"
+          type="search"
+          class="search-input"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Search (/ or Ctrl+K) · or type hl in address bar"
+          aria-label="Search links"
+        />
+      </label>
+    </header>
+    <div id="message" class="message hidden" role="status"></div>
+    <nav
+      id="section-tabs"
+      class="section-tabs"
+      role="tablist"
+      aria-label="Link sections"
+    ></nav>
+    <div id="links" class="links" role="tabpanel"></div>
+    <section class="add-script is-collapsed" aria-label="Add action">
+      <div class="add-script-header">
+        <button
+          id="add-script-toggle"
+          type="button"
+          class="add-script-toggle"
+          aria-expanded="false"
+          aria-controls="add-script-panel"
+        >
+          Add action
+        </button>
+        <button id="link-builder-btn" type="button" class="add-script-advanced-btn">
+          Advanced…
+        </button>
+        <span class="add-script-chevron" aria-hidden="true">▾</span>
+      </div>
+      <div id="add-script-panel" class="add-script-panel" hidden>
+        <label class="field field-inline">
+          <span class="field-label">Type</span>
+          <select id="quick-add-mode">
+            <option value="link" selected>Link (new tab)</option>
+            <option value="scriptlet">Scriptlet (same tab)</option>
+          </select>
+        </label>
+        <label class="field field-inline">
+          <span class="field-label">Name</span>
+          <input
+            id="script-name"
+            type="text"
+            placeholder="Optional label"
+            autocomplete="off"
+          />
+        </label>
+        <label class="field">
+          <span class="field-label">Script or URL</span>
+          <textarea
+            id="script-code"
+            rows="4"
+            placeholder="URL/path"
+            spellcheck="false"
+          ></textarea>
+        </label>
+        <button id="add-script-btn" type="button">Add action</button>
+      </div>
+    </section>
+    <script type="module" src="sidebar.js"></script>
+  </body>
+</html>

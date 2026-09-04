@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Link builder</title>
+    <link rel="stylesheet" href="../lib/ui-theme.css" />
+    <link rel="stylesheet" href="../lib/ui-message.css" />
+    <link rel="stylesheet" href="builder.css" />
+    <link rel="stylesheet" href="../lib/codemirror-fields.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="page-header-main">
+        <h1>Link builder</h1>
+        <p class="page-subtitle">
+          Edit, add, import, and export custom link/script catalog. Saves in extension storage. Drag to reorder in the sidebar.
+        </p>
+      </div>
+      <div class="page-header-actions">
+        <button id="new-link-btn" type="button">New link</button>
+        <button id="export-custom-btn" type="button" class="secondary">Export</button>
+        <button id="import-btn" type="button" class="secondary">Import</button>
+        <input
+          id="import-file-input"
+          type="file"
+          accept=".json,application/json"
+          hidden
+        />
+      </div>
+    </header>
+
+    <div id="message" class="message hidden" role="status"></div>
+
+    <main class="layout">
+      <section class="panel links-panel" aria-label="User-added links">
+        <div class="panel-header">
+          <h2>User-added links</h2>
+          <span id="link-count" class="panel-meta"></span>
+        </div>
+        <div id="links-list" class="links-list"></div>
+      </section>
+
+      <section class="panel editor-panel" aria-label="Link editor">
+        <div class="panel-header">
+          <h2 id="editor-title">New link</h2>
+        </div>
+        <form id="link-form" class="link-form">
+          <input id="link-edit-id" type="hidden" value="" />
+
+          <section class="field-group first-group" aria-label="Identity">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input id="link-name" type="text" required autocomplete="off" />
+            </label>
+            <label class="field" id="link-section-field">
+              <span class="field-label">Section</span>
+              <select id="link-section"></select>
+            </label>
+            <label class="field is-hidden" id="link-section-new-field">
+              <span class="field-label">New section name</span>
+              <input id="link-section-new" type="text" autocomplete="off" />
+            </label>
+            <label class="field" id="tooltip-field">
+              <span class="field-label">Tooltip (optional)</span>
+              <input id="link-tooltip" type="text" autocomplete="off" placeholder="Hover text on the link label" />
+            </label>
+            <label class="field" id="search-tags-field">
+              <span class="field-label">Search tags (optional)</span>
+              <input id="link-search-tags" type="text" placeholder="comma, separated" />
+            </label>
+          </section>
+
+          <section class="field-group" aria-label="Tab targeting">
+            <div class="field-group-header">
+              <span class="field-label">Tab targeting</span>
+            </div>
+            <label class="field" id="host-pattern-field">
+              <span class="field-label">Host pattern</span>
+              <select id="host-pattern-mode">
+                <option value="inherit">Inherit from section</option>
+                <option value="none">None (active tab)</option>
+                <option value="custom">Custom regex</option>
+              </select>
+            </label>
+            <label class="field is-hidden" id="host-pattern-custom-field">
+              <span class="field-label">Custom host pattern</span>
+              <input
+                id="host-pattern-custom"
+                type="text"
+                placeholder="e.g. \.example\.com$"
+                spellcheck="false"
+              />
+            </label>
+          </section>
+
+          <section class="field-group" aria-label="Action">
+            <div class="field-group-header">
+              <span class="field-label">Action</span>
+            </div>
+            <label class="field">
+              <span class="field-label">Type</span>
+              <select id="link-type">
+                <option value="scriptlet">Scriptlet — run on page (Run)</option>
+                <option value="scriptlet-url">Scriptlet — return a URL (Open)</option>
+                <option value="navigate">Navigate (Open)</option>
+                <option value="derived-url">Derived URL</option>
+              </select>
+            </label>
+            <p id="link-type-hint" class="field-hint type-hint"></p>
+            <label class="field" id="link-code-field">
+              <span class="field-label" id="link-code-label">Script</span>
+              <textarea id="link-code" rows="5" spellcheck="false"></textarea>
+            </label>
+            <label class="field is-hidden" id="link-path-field">
+              <span class="field-label">Path</span>
+              <input id="link-path" type="text" spellcheck="false" />
+            </label>
+            <label class="field is-hidden" id="link-url-field">
+              <span class="field-label">URL template</span>
+              <input id="link-url" type="text" spellcheck="false" />
+            </label>
+            <label class="field is-hidden" id="link-nav-field">
+              <span class="field-label">Navigation</span>
+              <select id="link-nav"></select>
+            </label>
+          </section>
+
+          <section id="parameters-section" class="field-group">
+            <label class="field">
+              <span class="field-label">Script parameters</span>
+              <select id="parameter-mode">
+                <option value="none">None</option>
+                <option value="single">Single parameter</option>
+                <option value="multiple">Multiple parameters</option>
+              </select>
+            </label>
+            <div id="single-parameter-fields" class="parameter-panel is-hidden">
+              <div class="builder-row">
+                <input data-field="param-name" type="text" placeholder="name" />
+                <input data-field="param-placeholder" type="text" placeholder="placeholder" />
+                <input data-field="param-default" type="text" placeholder="default" />
+              </div>
+              <div class="builder-row">
+                <label class="inline-check">
+                  <input data-field="param-optional" type="checkbox" />
+                  Optional (may run empty)
+                </label>
+                <input
+                  data-field="param-choices"
+                  type="text"
+                  placeholder="choices, comma, separated"
+                />
+              </div>
+            </div>
+            <div id="multiple-parameters-panel" class="parameter-panel is-hidden">
+              <div id="multiple-parameters-list" class="builder-list"></div>
+              <button id="add-parameter-btn" type="button" class="secondary row-add">
+                Add parameter
+              </button>
+            </div>
+          </section>
+
+          <section id="nav-params-section" class="field-group is-hidden">
+            <div class="field-group-header">
+              <span class="field-label">URL navParams</span>
+              <button id="add-nav-param-btn" type="button" class="secondary row-add">
+                Add navParam
+              </button>
+            </div>
+            <div id="nav-params-list" class="builder-list"></div>
+          </section>
+
+          <section id="frames-section" class="field-group">
+            <label class="field">
+              <span class="field-label">Iframe targets</span>
+              <select id="frames-mode">
+                <option value="default">Default (top on run; all frames on load)</option>
+                <option value="custom">Specify frames</option>
+              </select>
+            </label>
+            <div id="frames-custom-fields" class="parameter-panel is-hidden">
+              <p class="field-hint">
+                Nesting is hops from the top document and does not include top.
+                Match is regex against each iframe document URL (not name/id).
+                A specified set is also used for on-load injection (default on-load is every reporting frame).
+              </p>
+              <div class="builder-row">
+                <label class="inline-check">
+                  <input id="frames-top" type="checkbox" checked />
+                  Include top document
+                </label>
+                <label class="field frames-nesting-field">
+                  <span class="field-label">Nesting level</span>
+                  <input
+                    id="frames-nesting-level"
+                    type="number"
+                    min="-1"
+                    step="1"
+                    placeholder="0 = none; N = 1..N; -1 = all"
+                  />
+                </label>
+              </div>
+              <label class="field">
+                <span class="field-label">Frame URL match (optional, one regex per line)</span>
+                <textarea
+                  id="frames-match"
+                  rows="2"
+                  spellcheck="false"
+                  placeholder="e.g. /edit$"
+                ></textarea>
+              </label>
+            </div>
+          </section>
+
+          <div class="form-actions">
+            <button id="save-link-btn" type="submit">Save</button>
+            <button id="delete-link-btn" type="button" class="danger secondary" disabled>
+              Delete
+            </button>
+            <button id="clear-form-btn" type="button" class="secondary">Reset</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <script type="module" src="builder.js"></script>
+  </body>
+</html>

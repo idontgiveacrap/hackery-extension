@@ -3,10 +3,13 @@
  * Must be present before the contextmenu event (registered as a content script).
  */
 (function () {
-  if (globalThis.__complexLinkerContextTargetInstalled) {
+  if (
+    globalThis.__hackeryLabContextTargetInstalled ||
+    globalThis.__complexLinkerContextTargetInstalled
+  ) {
     return;
   }
-  globalThis.__complexLinkerContextTargetInstalled = true;
+  globalThis.__hackeryLabContextTargetInstalled = true;
 
   let lastTarget = null;
 

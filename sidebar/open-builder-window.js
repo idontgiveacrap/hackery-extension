@@ -1,4 +1,4 @@
-import { captureTabPrefillForBuilder } from "./link-builder.js";
+import { captureTabPrefillForBuilder } from "./link-quick-add.js";
 import { StorageKeys } from "../lib/storage-keys.js";
 
 const BUILDER_PAGE = "builder/builder.html";

@@ -1,18 +1,20 @@
 import { emitCatalogChanged } from "../lib/catalog-events.js";
+import { invalidateCatalogSnapshot } from "../lib/catalog-cache.js";
+import { getCatalogSnapshot } from "../lib/catalog-service.js";
 import {
   appendMissingKeys,
-  applyOrder,
-  CATALOG_ORDER_KEY,
-  linkStableKey,
+  collectOriginParentMap,
   loadCatalogOrder,
+  moveKeysInOrder,
+  placementWouldCycle,
   saveCatalogOrder,
 } from "../lib/catalog-order.js";
 import {
   ensureLinkId,
-  ensureLinksOverlayInStorage,
+  loadLinksOverlay,
   importOverlayIntoExisting,
-  LEGACY_CUSTOM_MIGRATION_SECTION,
   mergeLinksCatalog,
+  overlayTreeFromMerged,
 } from "../lib/link-catalog.js";
 import { StorageKeys } from "../lib/storage-keys.js";
 
@@ -20,6 +22,7 @@ const { LINKS_OVERLAY_KEY } = StorageKeys;
 
 async function persistOverlay(overlay, reason = "overlay") {
   await browser.storage.local.set({ [LINKS_OVERLAY_KEY]: overlay });
+  invalidateCatalogSnapshot();
   emitCatalogChanged({ reason });
 }
 
@@ -28,49 +31,33 @@ export async function loadBundledLinksJson() {
   return response.json();
 }
 
-export async function ensureLinksOverlay() {
-  return ensureLinksOverlayInStorage();
-}
-
 /**
  * Merged catalog with user catalogOrder applied.
  */
 export async function loadMergedLinkCatalog() {
-  const bundled = await loadBundledLinksJson();
-  const overlay = await ensureLinksOverlay();
-  const merged = mergeLinksCatalog(bundled, overlay);
-  let order = await loadCatalogOrder();
-  const next = appendMissingKeys(order, merged);
-  if (
-    next.linkKeys.length !== order.linkKeys.length ||
-    next.sectionOrder.length !== order.sectionOrder.length
-  ) {
-    order = next;
-    await browser.storage.local.set({ [CATALOG_ORDER_KEY]: order });
-  }
-  return applyOrder(merged, order);
+  const snapshot = await getCatalogSnapshot();
+  return snapshot.ordered;
 }
 
 /** Raw merge without order (for order editing / export helpers). */
 export async function loadMergedLinkCatalogUnordered() {
-  const bundled = await loadBundledLinksJson();
-  const overlay = await ensureLinksOverlay();
-  return mergeLinksCatalog(bundled, overlay);
+  const snapshot = await getCatalogSnapshot();
+  return snapshot.mergedUnordered;
 }
 
 export async function getSectionOverlayChildren(sectionName) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   return overlay[sectionName]?.children || [];
 }
 
 export async function saveSectionOverlay(sectionName, section) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   overlay[sectionName] = section;
   await persistOverlay(overlay);
 }
 
 export async function saveSectionOverlayChildren(sectionName, children) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   overlay[sectionName] = {
     ...(overlay[sectionName] || {}),
     children,
@@ -87,7 +74,7 @@ export async function addLinksToSection(sectionName, nodes) {
 }
 
 export async function importLinksOverlay(raw) {
-  const overlay = await ensureLinksOverlay();
+  const overlay = await loadLinksOverlay();
   const result = importOverlayIntoExisting(overlay, raw);
   await persistOverlay(result.overlay, "import");
   const merged = mergeLinksCatalog(await loadBundledLinksJson(), result.overlay);
@@ -96,61 +83,132 @@ export async function importLinksOverlay(raw) {
   return result;
 }
 
-export async function findCustomLinkById(linkId) {
-  const overlay = await ensureLinksOverlay();
-  for (const [sectionName, section] of Object.entries(overlay)) {
-    if (!Array.isArray(section?.children)) {
+/**
+ * Locate a custom leaf inside an overlay section, including inside folders.
+ * Returns the live `children` array that holds it so callers can splice in place.
+ * @returns {{ siblings: object[], index: number, node: object, parentPath: string[] } | null}
+ */
+function locateCustomLeaf(children, linkId, parentPath = []) {
+  if (!Array.isArray(children)) {
+    return null;
+  }
+  for (let index = 0; index < children.length; index++) {
+    const node = children[index];
+    if (node?.children) {
+      const nested = locateCustomLeaf(
+        node.children,
+        linkId,
+        [...parentPath, node.name]
+      );
+      if (nested) {
+        return nested;
+      }
       continue;
     }
-    const index = section.children.findIndex((node) => node.id === linkId);
-    if (index !== -1) {
-      return { sectionName, index, node: section.children[index] };
+    if (node?.id === linkId) {
+      return { siblings: children, index, node, parentPath };
     }
   }
   return null;
 }
 
-export async function removeCustomLinkById(linkId) {
-  const found = await findCustomLinkById(linkId);
+/**
+ * @returns {{ overlay: object, sectionName: string, siblings: object[], index: number, node: object } | null}
+ */
+async function locateCustomLinkInOverlay(linkId) {
+  const overlay = await loadLinksOverlay();
+  for (const [sectionName, section] of Object.entries(overlay)) {
+    const found = locateCustomLeaf(section?.children, linkId);
+    if (found) {
+      return { overlay, sectionName, ...found };
+    }
+  }
+  return null;
+}
+
+/** Ids of every leaf stored in the overlay — the links a user can edit or remove. */
+export async function collectOverlayCustomLinkIds() {
+  const snapshot = await getCatalogSnapshot();
+  return new Set(snapshot.overlayLinkIds);
+}
+
+export async function findCustomLinkById(linkId) {
+  const found = await locateCustomLinkInOverlay(linkId);
   if (!found) {
-    return;
+    return null;
+  }
+  return {
+    sectionName: found.sectionName,
+    index: found.index,
+    node: found.node,
+    parentPath: found.parentPath,
+  };
+}
+
+export async function removeCustomLinkById(linkId) {
+  const found = await locateCustomLinkInOverlay(linkId);
+  if (!found) {
+    throw new Error("Custom link not found. Bundled links are edited in data/links.json.");
   }
 
-  const overlay = await ensureLinksOverlay();
-  const children = overlay[found.sectionName].children.filter(
-    (node) => node.id !== linkId
-  );
-  overlay[found.sectionName] = {
-    ...overlay[found.sectionName],
-    children,
+  const snapshot = {
+    node: structuredClone(found.node),
+    sectionName: found.sectionName,
+    index: found.index,
+    parentPath: found.parentPath || [],
   };
-  await persistOverlay(overlay, "delete");
+  found.siblings.splice(found.index, 1);
+  await persistOverlay(found.overlay, "delete");
+  return snapshot;
+}
+
+/**
+ * Reinsert a custom leaf at the snapshot location from removeCustomLinkById.
+ */
+export async function restoreCustomLinkAt(snapshot) {
+  if (!snapshot?.node?.id) {
+    throw new Error("Nothing to restore.");
+  }
+
+  const overlay = await loadLinksOverlay();
+  const sectionName = snapshot.sectionName;
+  if (!overlay[sectionName] || typeof overlay[sectionName] !== "object") {
+    overlay[sectionName] = { children: [] };
+  }
+  if (!Array.isArray(overlay[sectionName].children)) {
+    overlay[sectionName].children = [];
+  }
+
+  let siblings = overlay[sectionName].children;
+  for (const folderName of snapshot.parentPath || []) {
+    const folder = siblings.find(
+      (node) => node?.children && node.name === folderName
+    );
+    if (!folder) {
+      throw new Error("Original folder is missing; cannot restore.");
+    }
+    siblings = folder.children;
+  }
+
+  const insertAt = Math.min(snapshot.index ?? siblings.length, siblings.length);
+  siblings.splice(insertAt, 0, structuredClone(snapshot.node));
+  await persistOverlay(overlay, "restore");
 }
 
 export async function updateCustomLink(linkId, nextNode, targetSectionName) {
-  const found = await findCustomLinkById(linkId);
+  const found = await locateCustomLinkInOverlay(linkId);
   if (!found) {
     throw new Error("Custom link not found.");
   }
 
-  const overlay = await ensureLinksOverlay();
+  const { overlay } = found;
   const node = { ...nextNode, id: linkId };
   const sectionName = targetSectionName || found.sectionName;
 
   if (sectionName === found.sectionName) {
-    const nextChildren = overlay[found.sectionName].children.slice();
-    nextChildren[found.index] = node;
-    overlay[found.sectionName] = {
-      ...overlay[found.sectionName],
-      children: nextChildren,
-    };
+    found.siblings[found.index] = node;
   } else {
-    overlay[found.sectionName] = {
-      ...overlay[found.sectionName],
-      children: overlay[found.sectionName].children.filter(
-        (entry) => entry.id !== linkId
-      ),
-    };
+    found.siblings.splice(found.index, 1);
     overlay[sectionName] = {
       ...(overlay[sectionName] || {}),
       children: (overlay[sectionName]?.children || []).concat(node),
@@ -161,51 +219,57 @@ export async function updateCustomLink(linkId, nextNode, targetSectionName) {
 }
 
 export async function getAllCustomLinks() {
-  const overlay = await ensureLinksOverlay();
-  const order = await loadCatalogOrder();
-  const orderIndex = new Map(
-    (order.linkKeys || []).map((key, i) => [key, i])
-  );
+  const snapshot = await getCatalogSnapshot();
+  const overlayIds = snapshot.overlayLinkIds;
   const results = [];
 
-  for (const [sectionName, section] of Object.entries(overlay)) {
-    if (!Array.isArray(section?.children)) {
-      continue;
-    }
-    for (const node of section.children) {
-      if (node.id && !node.children) {
-        const key = linkStableKey(sectionName, [], node);
-        results.push({
-          ...node,
-          sectionName,
-          _orderRank: orderIndex.has(key)
-            ? orderIndex.get(key)
-            : Number.MAX_SAFE_INTEGER,
-        });
+  for (const [sectionName, section] of Object.entries(snapshot.ordered)) {
+    const collect = (nodes) => {
+      for (const node of nodes || []) {
+        if (node?.children) {
+          collect(node.children);
+          continue;
+        }
+        if (node?.id && overlayIds.has(node.id)) {
+          results.push({ ...node, sectionName });
+        }
       }
-    }
+    };
+    collect(section?.children);
   }
-
-  return results
-    .sort((a, b) => a._orderRank - b._orderRank)
-    .map(({ _orderRank, ...link }) => link);
+  return results;
 }
 
 export async function getCatalogSectionNames() {
-  const catalog = await loadMergedLinkCatalog();
-  return Object.keys(catalog);
+  const snapshot = await getCatalogSnapshot();
+  return Object.keys(snapshot.ordered);
 }
 
 export async function getLinksOverlayForExport() {
-  const overlay = await ensureLinksOverlay();
-  const order = await loadCatalogOrder();
-  return applyOrder(overlay, order);
+  const snapshot = await getCatalogSnapshot();
+  return overlayTreeFromMerged(snapshot.ordered, snapshot.overlayLinkIds);
 }
 
-/** @deprecated use addLinksToSection */
-export async function addCustomLinks(
-  nodes,
-  sectionName = LEGACY_CUSTOM_MIGRATION_SECTION
-) {
-  await addLinksToSection(sectionName, nodes);
+export async function reparentCatalogKey(stableKey, placement, destSiblingKeys) {
+  const unordered = await loadMergedLinkCatalogUnordered();
+  const originParent = collectOriginParentMap(unordered);
+  const order = await loadCatalogOrder();
+  if (
+    placementWouldCycle(
+      stableKey,
+      placement.parentKey,
+      order.parentByKey,
+      originParent
+    )
+  ) {
+    throw new Error("Cannot move a folder into itself.");
+  }
+
+  const parentByKey = { ...order.parentByKey, [stableKey]: placement };
+  const linkKeys = moveKeysInOrder(order.linkKeys, destSiblingKeys);
+  await saveCatalogOrder({
+    linkKeys,
+    sectionOrder: order.sectionOrder,
+    parentByKey,
+  });
 }

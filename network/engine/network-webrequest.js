@@ -1,10 +1,32 @@
+import { stripMetaCspTags } from "../../lib/csp-disable.js";
 import {
-  isCspDisabledForTab,
-  isCspStateHydrated,
-  stripCspHeaders,
-  stripMetaCspTags,
-  whenCspStateReady,
-} from "../../lib/csp-disable.js";
+  cacheCspPolicy,
+  getCachedCspPolicy,
+  hasCachedCspPolicy,
+  isCspNonceTab,
+} from "../../lib/csp-compose.js";
+import {
+  applyCspTouchingRules,
+  isCspHeaderName,
+  isCspTouchingRule,
+  isDocumentResourceType,
+  originFromUrl,
+  policyHasNonceOrHash,
+  ruleDisablesCsp,
+  shouldRewriteCsp,
+  shouldSeedOriginal,
+} from "../../lib/csp-compose-core.js";
+import {
+  createCspNonce,
+  getCspPunchReason,
+  initCspNonce,
+  punchCspPolicy,
+  punchMetaCspTags,
+  rememberCspFramePolicy,
+  rememberCspNonce,
+  rememberCspPunchReason,
+  rewriteMetaCspTags,
+} from "../../lib/csp-nonce.js";
 import {
   applyModifyReplacementsToContext,
   appendNetworkLogQueue,
@@ -19,6 +41,14 @@ import {
   webRequestHeadersToObject,
 } from "./network-rules-shared.js";
 import { NETWORK_RULES_LOG_KEY, NETWORK_SHARED_STATE_KEY } from "../storage-keys.js";
+
+/**
+ * An enforcing meta CSP only applies from inside <head>, so the streaming
+ * filter stops holding bytes back once the head ends (or the cap is hit on a
+ * document with no head close in sight).
+ */
+const HEAD_END_PATTERN = /<\/head\s*>|<body[\s>]/i;
+const HEAD_SCAN_LIMIT = 262144;
 
 let webRequestRules = [];
 let webRequestEnabled = false;
@@ -355,69 +385,273 @@ function isHtmlDocumentResponse(details, headers) {
   return !charset || charset === "utf-8" || charset === "us-ascii";
 }
 
+function dropEnforcingCspHeaders(headers) {
+  return (headers || []).filter(
+    (header) => String(header.name || "").toLowerCase() !== "content-security-policy"
+  );
+}
+
+function matchingSkippingCspHeaderEdits(rules) {
+  return (rules || []).map((rule) => {
+    const mod = rule.modify || {};
+    return {
+      ...rule,
+      modify: {
+        ...mod,
+        setHeaders: (mod.setHeaders || []).filter(
+          (header) => !isCspHeaderName(header.name)
+        ),
+        headerReplacements: (mod.headerReplacements || []).filter(
+          (entry) => !entry.name || !isCspHeaderName(entry.name)
+        ),
+      },
+    };
+  });
+}
+
 /**
- * Buffer the whole response so text rules and meta-CSP stripping can rewrite it.
- * Note this delays first paint until the response completes, and leaves any
- * Content-Length header stale — acceptable for opt-in rules and the CSP toggle.
- *
- * Must be called synchronously from the webRequest listener: filterResponseData
- * only accepts a request id while that request's listener is on the stack.
- * @param {object} details webRequest details for the response.
- * @param {object[]} bodyRules Rules needing body access (may be empty).
- * @param {object} ctx Rule-matching context for this response.
- * @param {boolean} maybeStripMetaCsp Whether this response is a rewritable HTML
- *   document in a tab that has, or may turn out to have, CSP disabled. Resolved
- *   for real in onstop, once the disabled-tab set is known.
+ * DNR already removed CSP. Re-add a single composed policy, or leave none.
+ * @param {object} details
+ * @param {object[]} matching
+ * @param {object[]} responseHeaders
  */
-function filterResponseBody(details, bodyRules, ctx, maybeStripMetaCsp) {
+function composeDocumentCsp(details, matching, responseHeaders) {
+  const nonceToggle = isCspNonceTab(details.tabId);
+  const cspRules = matching.filter(isCspTouchingRule);
+  const frameId = details.frameId ?? 0;
+  const headerPolicy = String(
+    (responseHeaders || []).find((header) => isCspHeaderName(header.name))
+      ?.value || ""
+  ).trim();
+  if (
+    !shouldRewriteCsp({
+      nonceToggle,
+      networkArmed: webRequestEnabled,
+      matchingCspRules: cspRules,
+      resourceType: details.type,
+      borrowableNonce: policyHasNonceOrHash(headerPolicy),
+    })
+  ) {
+    return { headers: responseHeaders, meta: null };
+  }
+
+  const seedOriginal = shouldSeedOriginal(nonceToggle, cspRules);
+  // A policy still on the response beats any cached read: DNR has not stripped
+  // this one, and a cookie-gated app can answer the background seed fetch
+  // without the policy it sends to a signed-in navigation.
+  if (headerPolicy) {
+    cacheCspPolicy(details.url, headerPolicy);
+  }
+  if (
+    seedOriginal &&
+    !headerPolicy &&
+    !hasCachedCspPolicy(details.url) &&
+    !cspRules.length
+  ) {
+    rememberCspPunchReason(details.tabId, frameId, "cache-miss");
+    // Fail-open, and worth saying out loud: DNR stripped this document and we
+    // never observed its policy, so it ends up with no CSP at all. Happens when
+    // a frame origin first appears after the tab's strip rule was installed.
+    console.warn(
+      `CSP cache miss ${details.url} (frame ${frameId}): stripped with no policy restored`
+    );
+    return {
+      headers: dropEnforcingCspHeaders(responseHeaders),
+      meta: { mode: "strip" },
+    };
+  }
+
+  const seed = seedOriginal
+    ? headerPolicy || getCachedCspPolicy(details.url)
+    : "";
+  const { policy, disabled } = applyCspTouchingRules(
+    seed,
+    cspRules,
+    applyModifyReplacementsToContext
+  );
+  if (disabled || cspRules.some(ruleDisablesCsp)) {
+    rememberCspPunchReason(details.tabId, frameId, "csp-rule-disable");
+    return {
+      headers: dropEnforcingCspHeaders(responseHeaders),
+      meta: { mode: "strip" },
+    };
+  }
+
+  let finalPolicy = policy;
+  if (!finalPolicy && !nonceToggle) {
+    rememberCspPunchReason(details.tabId, frameId, "empty-composed-csp");
+    return {
+      headers: dropEnforcingCspHeaders(responseHeaders),
+      meta: { mode: "strip" },
+    };
+  }
+  if (!finalPolicy && nonceToggle) {
+    // No header policy to seed from, but a meta policy can still be enforcing
+    // and is the only CSP on plenty of app shells. Mint a nonce and punch the
+    // tag; with no policy anywhere the nonce attribute is simply ignored.
+    const metaNonce = createCspNonce();
+    rememberCspNonce(details.tabId, frameId, metaNonce);
+    rememberCspPunchReason(details.tabId, frameId, "no-csp-header-meta-nonce");
+    return {
+      headers: dropEnforcingCspHeaders(responseHeaders),
+      meta: { mode: "punch", nonce: metaNonce },
+    };
+  }
+
+  const nonce = createCspNonce();
+  const punched = punchCspPolicy(finalPolicy, nonce);
+  if (punched.value) {
+    finalPolicy = punched.value;
+    rememberCspNonce(details.tabId, frameId, nonce);
+    rememberCspPunchReason(details.tabId, frameId, punched.reason);
+  } else {
+    rememberCspPunchReason(details.tabId, frameId, punched.reason);
+  }
+
+  return {
+    headers: [
+      ...dropEnforcingCspHeaders(responseHeaders),
+      { name: "Content-Security-Policy", value: finalPolicy },
+    ],
+    meta: { mode: "rewrite", policy: finalPolicy },
+  };
+}
+
+/**
+ * One filterResponseData per request, shared by text body rules and meta-CSP
+ * edits.
+ *
+ * Body rules need the whole response, so that path buffers. Meta-CSP alone
+ * streams: an enforcing meta policy only counts inside <head>, so the filter
+ * holds back the head, rewrites it, and passes the rest through. Buffering
+ * whole documents here stalled first paint on every navigation.
+ *
+ * @param {object} details
+ * @param {object[]} bodyRules
+ * @param {object} ctx
+ * @param {{ mode: "strip" } | { mode: "punch", nonce: string }
+ *   | { mode: "rewrite", policy: string } | null} metaCsp
+ */
+function filterResponseBody(details, bodyRules, ctx, metaCsp) {
   try {
     const filter = browser.webRequest.filterResponseData(details.requestId);
+    // Streaming decode: partial multi-byte sequences are held back rather than
+    // turning into U+FFFD at a chunk boundary.
     const decoder = new TextDecoder("utf-8");
     const encoder = new TextEncoder();
     const chunks = [];
+
+    function editMetaCsp(text) {
+      if (metaCsp?.mode === "strip") {
+        return stripMetaCspTags(text, details.url) ?? text;
+      }
+      if (metaCsp?.mode === "punch") {
+        const punched = punchMetaCspTags(text, metaCsp.nonce);
+        const reason =
+          punched.html || punched.reason !== "no-meta-csp"
+            ? punched.reason
+            : "no-csp-anywhere";
+        rememberCspPunchReason(details.tabId, details.frameId ?? 0, reason);
+        // The header-stage line is logged before the body streams, so the meta
+        // outcome needs its own line to be visible without opening Inspect.
+        if (details.type === "main_frame") {
+          console.info(`CSP meta ${details.url}: ${reason}`);
+        }
+        return punched.html ?? text;
+      }
+      if (metaCsp?.mode === "rewrite") {
+        return (
+          rewriteMetaCspTags(text, metaCsp.policy) ??
+          stripMetaCspTags(text, details.url) ??
+          text
+        );
+      }
+      return text;
+    }
+
+    if (!bodyRules.length) {
+      let headText = "";
+      let headFlushed = false;
+
+      const flushHead = () => {
+        headFlushed = true;
+        const edited = editMetaCsp(headText);
+        headText = "";
+        if (edited) {
+          filter.write(encoder.encode(edited));
+        }
+      };
+
+      filter.ondata = (event) => {
+        const text = decoder.decode(event.data, { stream: true });
+        if (headFlushed) {
+          if (text) {
+            filter.write(encoder.encode(text));
+          }
+          return;
+        }
+        headText += text;
+        if (
+          HEAD_END_PATTERN.test(headText) ||
+          headText.length >= HEAD_SCAN_LIMIT
+        ) {
+          flushHead();
+        }
+      };
+
+      filter.onstop = () => {
+        try {
+          const tail = decoder.decode();
+          if (headFlushed) {
+            if (tail) {
+              filter.write(encoder.encode(tail));
+            }
+          } else {
+            headText += tail;
+            flushHead();
+          }
+        } catch {
+          if (!headFlushed && headText) {
+            filter.write(encoder.encode(headText));
+          }
+        }
+        filter.close();
+      };
+
+      filter.onerror = () => {
+        filter.disconnect();
+      };
+      return;
+    }
 
     filter.ondata = (event) => {
       chunks.push(event.data);
     };
 
     filter.onstop = () => {
-      // The filter stays open until close(), so the disabled-tab set can be
-      // read here. Deciding now rather than at header time avoids attaching
-      // the filter from a promise, which arrives too late for the request id.
-      void Promise.resolve(
-        maybeStripMetaCsp ? whenCspStateReady() : null
-      ).then(() => {
-        try {
-          const totalLength = chunks.reduce(
-            (sum, chunk) => sum + chunk.byteLength,
-            0
-          );
-          const merged = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const chunk of chunks) {
-            merged.set(new Uint8Array(chunk), offset);
-            offset += chunk.byteLength;
-          }
-
-          let bodyText = decoder.decode(merged);
-          if (maybeStripMetaCsp && isCspDisabledForTab(details.tabId)) {
-            bodyText = stripMetaCspTags(bodyText, details.url) ?? bodyText;
-          }
-          if (!bodyRules.length) {
-            filter.write(encoder.encode(bodyText));
-          } else {
-            const result = applyResponseBodyRules(bodyRules, ctx, bodyText);
-            filter.write(
-              encoder.encode(result.blocked ? "" : result.body ?? bodyText)
-            );
-          }
-        } catch {
-          for (const chunk of chunks) {
-            filter.write(chunk);
-          }
+      try {
+        const totalLength = chunks.reduce(
+          (sum, chunk) => sum + chunk.byteLength,
+          0
+        );
+        const merged = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(new Uint8Array(chunk), offset);
+          offset += chunk.byteLength;
         }
-        filter.close();
-      });
+
+        const bodyText = editMetaCsp(decoder.decode(merged));
+        const result = applyResponseBodyRules(bodyRules, ctx, bodyText);
+        filter.write(
+          encoder.encode(result.blocked ? "" : result.body ?? bodyText)
+        );
+      } catch {
+        for (const chunk of chunks) {
+          filter.write(chunk);
+        }
+      }
+      filter.close();
     };
 
     filter.onerror = () => {
@@ -430,56 +664,96 @@ function filterResponseBody(details, bodyRules, ctx, maybeStripMetaCsp) {
 
 function onHeadersReceived(details) {
   let responseHeaders = details.responseHeaders;
-  const cspDisabled = isCspDisabledForTab(details.tabId);
-  const headerObject = webRequestHeadersToObject(responseHeaders);
-  // Until the set is read back, a disabled tab looks the same as a normal one,
-  // so buffer the document on the chance it turns out to be disabled. That
-  // costs first paint on documents landing in the window between a background
-  // wake-up and the storage read, which is why hydration starts at background
-  // load rather than on first use. Headers need no such care: the DNR session
-  // rule strips those whether or not this listener knows anything.
-  const stripMetaCsp =
-    (cspDisabled || !isCspStateHydrated()) &&
-    isHtmlDocumentResponse(details, headerObject);
-
-  if (cspDisabled) {
-    const stripped = stripCspHeaders(responseHeaders);
-    if (stripped) {
-      responseHeaders = stripped;
-    }
+  if (details.tabId < 0) {
+    // Not a seed source: an extension or service-worker fetch carries different
+    // Sec-Fetch-* and credentials than the navigation, so its policy can differ
+    // from the one the document actually gets.
+    return {};
   }
+
+  const headerObject = webRequestHeadersToObject(responseHeaders);
+  const htmlDocument = isHtmlDocumentResponse(details, headerObject);
 
   const rulesApply =
     webRequestEnabled &&
     details.tabId >= 0 &&
     !shouldDeferToPageHook(details.type);
 
+  let matching = [];
+  let ctx = null;
+  if (rulesApply) {
+    ctx = buildWebRequestContext(
+      { ...details, responseHeaders },
+      "response"
+    );
+    matching = getMatchingRules(webRequestRules, ctx);
+    const headerRules = matchingSkippingCspHeaderEdits(
+      matching.filter(
+        (rule) =>
+          rule.action === "modify" &&
+          (rule.modify?.headerReplacements?.length || rule.modify?.setHeaders?.length)
+      )
+    );
+    const networkHeaderChange = applyHeaderRules(
+      headerRules,
+      ctx,
+      responseHeaders
+    );
+    if (networkHeaderChange) {
+      responseHeaders = networkHeaderChange;
+    }
+  }
+
+  const sitePolicy = String(
+    (details.responseHeaders || []).find((header) => isCspHeaderName(header.name))
+      ?.value || ""
+  );
+  // Seed the cache from ordinary browsing, whether or not the toggle is on.
+  // Documents only: XHR/image CSP (often `default-src 'none'`) must not become
+  // the origin seed, and punching those responses merged a second policy under
+  // MV3. The alternative — a second background request per origin — doubled
+  // every navigation and still read the wrong policy on cookie-gated apps.
+  // Once the tab's strip rule is installed there is nothing left to observe, so
+  // the seed has to come from a load that happened before it.
+  if (isDocumentResourceType(details.type)) {
+    cacheCspPolicy(details.url, sitePolicy);
+  }
+
+  const composed = composeDocumentCsp(details, matching, responseHeaders);
+  responseHeaders = composed.headers;
+  const metaCsp = htmlDocument ? composed.meta : null;
+
+  // Recorded for every document, composed or not: a scriptlet's frame targets
+  // are chosen by depth and URL, so the answer to "will this frame take an
+  // injection" is per frame and per origin, not per tab.
+  if (details.type === "main_frame" || details.type === "sub_frame") {
+    rememberCspFramePolicy(details.tabId, details.frameId ?? 0, {
+      url: details.url,
+      origin: originFromUrl(details.url),
+      type: details.type,
+      sitePolicy,
+      policy: String(
+        responseHeaders.find((header) => isCspHeaderName(header.name))?.value || ""
+      ),
+      meta: composed.meta?.mode || "none",
+    });
+  }
+
+  if (details.type === "main_frame" && isCspNonceTab(details.tabId)) {
+    const added = responseHeaders.find((header) => isCspHeaderName(header.name));
+    console.info(
+      `CSP compose ${details.url}: reason=${getCspPunchReason(details.tabId, details.frameId ?? 0)}` +
+        ` meta=${composed.meta?.mode || "none"} header=${added ? added.value : "none"}`
+    );
+  }
+
   if (!rulesApply) {
-    if (stripMetaCsp) {
-      filterResponseBody(details, [], null, true);
+    if (metaCsp) {
+      filterResponseBody(details, [], null, metaCsp);
     }
     return responseHeaders !== details.responseHeaders
       ? { responseHeaders }
       : {};
-  }
-
-  const ctx = buildWebRequestContext(
-    { ...details, responseHeaders },
-    "response"
-  );
-  const matching = getMatchingRules(webRequestRules, ctx);
-  const headerRules = matching.filter(
-    (rule) =>
-      rule.action === "modify" &&
-      (rule.modify?.headerReplacements?.length || rule.modify?.setHeaders?.length)
-  );
-  const networkHeaderChange = applyHeaderRules(
-    headerRules,
-    ctx,
-    responseHeaders
-  );
-  if (networkHeaderChange) {
-    responseHeaders = networkHeaderChange;
   }
 
   const bodyRules = matching.filter((rule) =>
@@ -490,13 +764,12 @@ function onHeadersReceived(details) {
     (bodyRules.some((rule) => rule.action === "block") ||
       isTextLikeContentType(ctx.headers));
 
-  // One filterResponseData per request, so both concerns share a single filter.
-  if (bodyRulesNeedFilter || stripMetaCsp) {
+  if (bodyRulesNeedFilter || metaCsp) {
     filterResponseBody(
       details,
       bodyRulesNeedFilter ? bodyRules : [],
       ctx,
-      stripMetaCsp
+      metaCsp
     );
   }
 
@@ -533,6 +806,7 @@ function registerWebRequestListeners() {
     ["blocking", "responseHeaders"]
   );
   webRequestListenersRegistered = true;
+  initCspNonce();
 }
 
 export function syncNetworkWebRequest(state, hooksEnabled = true, sharedState = {}) {

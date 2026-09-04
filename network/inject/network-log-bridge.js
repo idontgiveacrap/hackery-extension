@@ -4,7 +4,9 @@
  * Safe to inject repeatedly (Re-inject / per-frame install).
  */
 (function () {
-  const previousHandler = globalThis.__complexLinkerNetworkLogBridgeHandler;
+  const previousHandler =
+    globalThis.__hackeryLabNetworkLogBridgeHandler ||
+    globalThis.__complexLinkerNetworkLogBridgeHandler;
   if (previousHandler) {
     window.removeEventListener("message", previousHandler);
   }
@@ -18,7 +20,11 @@
       return;
     }
     const data = event.data;
-    if (!data || data.source !== "complex-linker-network-hook") {
+    if (
+      !data ||
+      (data.source !== "hackery-lab-network-hook" &&
+        data.source !== "complex-linker-network-hook")
+    ) {
       return;
     }
     if (data.type === "log") {
@@ -43,6 +49,6 @@
     }
   }
 
-  globalThis.__complexLinkerNetworkLogBridgeHandler = handleNetworkHookMessage;
+  globalThis.__hackeryLabNetworkLogBridgeHandler = handleNetworkHookMessage;
   window.addEventListener("message", handleNetworkHookMessage);
 })();

@@ -231,7 +231,7 @@ function hrefToLinkFields(href, sectionHostPattern) {
     if (code.startsWith("void(") && code.endsWith(")")) {
       code = code.slice(5, -1);
     }
-    return { type: "scriptlet", code: code.trim() };
+    return { code: code.trim() };
   }
 
   if (/^https?:\/\//i.test(href)) {
@@ -239,23 +239,20 @@ function hrefToLinkFields(href, sectionHostPattern) {
     const absolute = url.href;
     if (sectionHostPattern && matchesHostPattern(absolute, sectionHostPattern)) {
       return {
-        type: "derived-url",
-        nav: "foreground",
-        path: `${url.pathname}${url.search}${url.hash}`,
+        url: `${url.pathname}${url.search}${url.hash}`,
+        open: "tab",
       };
     }
     return {
-      type: "derived-url",
-      nav: "foreground",
-      path: absolute,
-      hostPattern: null,
+      url: absolute,
+      open: "tab",
+      match: null,
     };
   }
 
   return {
-    type: "derived-url",
-    nav: "foreground",
-    path: href.startsWith("/") ? href : `/${href}`,
+    url: href.startsWith("/") ? href : `/${href}`,
+    open: "tab",
   };
 }
 
@@ -271,24 +268,21 @@ function folderNodeToChildren(node, sectionHostPattern) {
 
   for (const link of node.links) {
     const fields = hrefToLinkFields(link.href, sectionHostPattern);
-    const entry = {
+    children.push({
+      id: crypto.randomUUID(),
       name: link.title,
       ...fields,
-    };
-    if (fields.hostPattern === null) {
-      entry.hostPattern = null;
-    }
-    children.push(entry);
+    });
   }
 
   return children;
 }
 
 function sectionFromFolderNode(node) {
-  const hostPattern = inferHostPattern(collectAbsoluteHostnames(node));
+  const match = inferHostPattern(collectAbsoluteHostnames(node));
   return {
-    hostPattern,
-    children: folderNodeToChildren(node, hostPattern),
+    match,
+    children: folderNodeToChildren(node, match),
   };
 }
 

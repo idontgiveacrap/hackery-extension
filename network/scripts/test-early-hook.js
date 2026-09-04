@@ -14,7 +14,7 @@ async function run() {
     `data:text/javascript;base64,${Buffer.from(installSource).toString("base64")}`
   );
   const messages = [];
-  globalThis.location = { href: "https://dev320950.service-now.com/page" };
+  globalThis.location = { href: "https://app.example.com/page" };
   globalThis.top = globalThis;
   globalThis.postMessage = (message) => messages.push(message);
 
@@ -43,13 +43,13 @@ async function run() {
   requestInit.headers = { "Content-Type": "application/json" };
   assert.equal(
     await new Request(
-      "https://dev320950.service-now.com/api/now/v1/batch",
+      "https://app.example.com/api/v1/batch",
       requestInit
     ).text(),
     '{"pipelineId":"entity_list"}'
   );
   const pending = globalThis.fetch(
-    "https://dev320950.service-now.com/api/now/v1/batch",
+    "https://app.example.com/api/v1/batch",
     requestInit
   );
 
@@ -84,7 +84,7 @@ async function run() {
 
   await pending;
   assert.equal(nativeCalls, 1);
-  assert.equal(globalThis.fetch.name, "ComplexLinkerFetch");
+  assert.equal(globalThis.fetch.name, "HackeryLabFetch");
   assert.equal(
     messages.some(
       (message) =>

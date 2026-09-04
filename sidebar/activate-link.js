@@ -7,7 +7,7 @@ export function createActivateLink({ showMessage, hideMessage }) {
   return async function activateLink(node, row = null) {
     hideMessage();
     try {
-      const outcome = await activateLinkNode(node, { row });
+      const outcome = await activateLinkNode(node, { row, trigger: "sidebar" });
       if (!outcome.ok) {
         showMessage(outcome.message || "Action failed.");
         return;

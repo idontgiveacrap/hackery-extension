@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Action parameters</title>
+    <link rel="stylesheet" href="../lib/ui-theme.css" />
+    <link rel="stylesheet" href="../lib/ui-message.css" />
+    <link rel="stylesheet" href="params.css" />
+  </head>
+  <body>
+    <form id="params-form" class="prompt">
+      <header class="prompt-header">
+        <h1 id="action-name">Action parameters</h1>
+        <p id="action-context" class="prompt-context"></p>
+      </header>
+
+      <div id="message" class="message hidden" role="status"></div>
+
+      <div id="fields" class="fields"></div>
+
+      <footer class="prompt-actions">
+        <button type="button" id="cancel-btn" class="secondary">Cancel</button>
+        <button type="submit" id="run-btn">Run</button>
+      </footer>
+    </form>
+
+    <script type="module" src="params.js"></script>
+  </body>
+</html>

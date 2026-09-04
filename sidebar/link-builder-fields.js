@@ -192,42 +192,66 @@ function updateNavParamRowVisibility(row) {
 
 function createNavParamRow(values = {}) {
   const row = document.createElement("div");
-  row.className = "nav-param-row builder-row";
+  row.className = "nav-param-row";
   row.innerHTML = `
-    <input data-field="nav-name" type="text" placeholder="name" />
-    <select data-field="nav-kind">
-      <option value="none">Manual / default only</option>
-      <option value="url">fromUrl (regex)</option>
-      <option value="dom">fromSelector (DOM)</option>
-    </select>
-    <div class="nav-url-field is-hidden">
-      <textarea data-field="nav-from-url" rows="1" spellcheck="false" placeholder="regex (capture group 1)"></textarea>
+    <div class="nav-param-head">
+      <label class="field nav-name-field">
+        <span class="field-label">Param name</span>
+        <input data-field="nav-name" type="text" placeholder="id" />
+      </label>
+      <label class="field nav-kind-field">
+        <span class="field-label">Value source</span>
+        <select data-field="nav-kind">
+          <option value="none">Manual / default only</option>
+          <option value="url">fromUrl (regex)</option>
+          <option value="dom">fromSelector (DOM)</option>
+        </select>
+      </label>
+      <button type="button" class="row-remove secondary" title="Remove navParam" aria-label="Remove navParam">×</button>
     </div>
+    <label class="field nav-url-field is-hidden">
+      <span class="field-label">fromUrl regex (capture group 1)</span>
+      <textarea data-field="nav-from-url" rows="1" spellcheck="false" placeholder="e.g. /items/([^/?#]+)"></textarea>
+    </label>
     <div class="nav-dom-fields is-hidden">
-      <input data-field="nav-from-selector" type="text" placeholder="CSS selector" />
-      <select data-field="nav-string-source">
-        ${STRING_SOURCE_OPTIONS.map(
-          (option) =>
-            `<option value="${option.value}">${option.label}</option>`
-        ).join("")}
-      </select>
-      <div class="nav-attribute-field is-hidden">
-        <input data-field="nav-attribute" type="text" placeholder="attribute name" />
-      </div>
+      <label class="field nav-selector-field">
+        <span class="field-label">CSS selector</span>
+        <input data-field="nav-from-selector" type="text" placeholder="e.g. #record-title" />
+      </label>
+      <label class="field nav-string-source-field">
+        <span class="field-label">String source</span>
+        <select data-field="nav-string-source">
+          ${STRING_SOURCE_OPTIONS.map(
+            (option) =>
+              `<option value="${option.value}">${option.label}</option>`
+          ).join("")}
+        </select>
+      </label>
+      <label class="field nav-attribute-field is-hidden">
+        <span class="field-label">Attribute name</span>
+        <input data-field="nav-attribute" type="text" placeholder="e.g. data-value" />
+      </label>
     </div>
-    <label class="inline-check">
-      <input data-field="nav-show-input" type="checkbox" />
-      Show input (placeholder)
-    </label>
-    <div class="nav-placeholder-field is-hidden">
-      <input data-field="nav-placeholder" type="text" placeholder="placeholder text (may be empty)" />
+    <div class="nav-value-fields">
+      <label class="field nav-default-field">
+        <span class="field-label">Default value</span>
+        <input data-field="nav-default" type="text" />
+      </label>
+      <label class="field nav-placeholder-field is-hidden">
+        <span class="field-label">Input placeholder (may be empty)</span>
+        <input data-field="nav-placeholder" type="text" />
+      </label>
     </div>
-    <input data-field="nav-default" type="text" placeholder="default" />
-    <label class="inline-check">
-      <input data-field="nav-optional" type="checkbox" />
-      Optional (may run empty)
-    </label>
-    <button type="button" class="row-remove secondary" title="Remove">×</button>
+    <div class="nav-param-toggles">
+      <label class="inline-check">
+        <input data-field="nav-show-input" type="checkbox" />
+        Show input on activate
+      </label>
+      <label class="inline-check">
+        <input data-field="nav-optional" type="checkbox" />
+        Optional (may run empty)
+      </label>
+    </div>
   `;
 
   const kindSelect = row.querySelector('[data-field="nav-kind"]');
@@ -238,16 +262,16 @@ function createNavParamRow(values = {}) {
   showInput.addEventListener("change", () => updateNavParamRowVisibility(row));
   row.querySelector(".row-remove").addEventListener("click", () => row.remove());
 
-  if (values.fromUrl || values.url) {
+  if (values.fromUrl) {
     kindSelect.value = "url";
     setFieldValue(
       row.querySelector('[data-field="nav-from-url"]'),
-      values.fromUrl || values.url
+      values.fromUrl
     );
-  } else if (values.fromSelector || values.selector) {
+  } else if (values.fromSelector) {
     kindSelect.value = "dom";
     row.querySelector('[data-field="nav-from-selector"]').value =
-      values.fromSelector || values.selector;
+      values.fromSelector;
     sourceSelect.value = values.stringSource || "textContent";
     row.querySelector('[data-field="nav-attribute"]').value = values.attribute || "";
   } else {
@@ -268,7 +292,7 @@ function createNavParamRow(values = {}) {
   attachCodeMirror(row.querySelector('[data-field="nav-from-url"]'), {
     language: "regex",
     compact: true,
-    placeholder: "regex (capture group 1)",
+    placeholder: "e.g. /items/([^/?#]+)",
   });
   return row;
 }
@@ -276,6 +300,12 @@ function createNavParamRow(values = {}) {
 export function wireBuilderFieldUi(fieldElements) {
   fieldElements.hostPatternModeSelect.addEventListener("change", () => {
     updateHostPatternFieldVisibility(fieldElements);
+  });
+  fieldElements.excludePatternModeSelect?.addEventListener("change", () => {
+    updateExcludePatternFieldVisibility(fieldElements);
+  });
+  fieldElements.framesModeSelect.addEventListener("change", () => {
+    updateFramesFieldVisibility(fieldElements);
   });
   fieldElements.parameterModeSelect.addEventListener("change", () => {
     updateParameterModeVisibility(fieldElements);
@@ -291,6 +321,94 @@ export function wireBuilderFieldUi(fieldElements) {
 export function updateHostPatternFieldVisibility(fieldElements) {
   const mode = fieldElements.hostPatternModeSelect.value;
   setFieldVisible(fieldElements.hostPatternCustomField, mode === "custom");
+}
+
+export function updateExcludePatternFieldVisibility(fieldElements) {
+  if (!fieldElements.excludePatternModeSelect) {
+    return;
+  }
+  const mode = fieldElements.excludePatternModeSelect.value;
+  setFieldVisible(fieldElements.excludePatternCustomField, mode === "custom");
+}
+
+/**
+ * Show custom frame-target fields only when the user opted out of the default.
+ * @param {ReturnType<typeof getBuilderFieldElements>} fieldElements
+ */
+export function updateFramesFieldVisibility(fieldElements) {
+  const mode = fieldElements.framesModeSelect.value;
+  setFieldVisible(fieldElements.framesCustomFields, mode === "custom");
+}
+
+/**
+ * Read a leaf `frames` spec from the builder, or `undefined` to omit the field.
+ * @param {ReturnType<typeof getBuilderFieldElements>} fieldElements
+ * @returns {object | undefined}
+ */
+export function readFramesFields(fieldElements) {
+  if (fieldElements.framesModeSelect.value !== "custom") {
+    return undefined;
+  }
+
+  const frames = {};
+  if (fieldElements.framesTopInput.checked) {
+    frames.top = true;
+  }
+
+  const nestingRaw = fieldElements.framesNestingInput.value.trim();
+  if (nestingRaw) {
+    const nestingLevel = Number(nestingRaw);
+    if (!Number.isInteger(nestingLevel) || nestingLevel < -1) {
+      throw new Error("Frame nesting level must be an integer >= -1.");
+    }
+    if (nestingLevel !== 0) {
+      frames.nestingLevel = nestingLevel;
+    }
+  }
+
+  const patterns = getFieldValue(fieldElements.framesMatchInput)
+    .split(/\r?\n/)
+    .map((pattern) => pattern.trim())
+    .filter(Boolean);
+  if (patterns.length) {
+    frames.match = patterns;
+  }
+
+  return frames;
+}
+
+/**
+ * Fill iframe-target controls from a stored leaf `frames` object.
+ * @param {ReturnType<typeof getBuilderFieldElements>} fieldElements
+ * @param {object | undefined} frames
+ */
+export function populateFramesFields(fieldElements, frames) {
+  if (!frames || typeof frames !== "object") {
+    clearFramesFields(fieldElements);
+    return;
+  }
+
+  fieldElements.framesModeSelect.value = "custom";
+  fieldElements.framesTopInput.checked = Boolean(frames.top);
+  fieldElements.framesNestingInput.value =
+    typeof frames.nestingLevel === "number" ? String(frames.nestingLevel) : "";
+  setFieldValue(
+    fieldElements.framesMatchInput,
+    Array.isArray(frames.match) ? frames.match.join("\n") : ""
+  );
+  updateFramesFieldVisibility(fieldElements);
+}
+
+/**
+ * Reset iframe-target controls to omit `frames` (runtime default).
+ * @param {ReturnType<typeof getBuilderFieldElements>} fieldElements
+ */
+export function clearFramesFields(fieldElements) {
+  fieldElements.framesModeSelect.value = "default";
+  fieldElements.framesTopInput.checked = true;
+  fieldElements.framesNestingInput.value = "";
+  setFieldValue(fieldElements.framesMatchInput, "");
+  updateFramesFieldVisibility(fieldElements);
 }
 
 export function updateParameterModeVisibility(fieldElements) {
@@ -327,15 +445,83 @@ export function populateHostPattern(fieldElements, hostPattern) {
   updateHostPatternFieldVisibility(fieldElements);
 }
 
+export function readExcludePattern(fieldElements) {
+  if (!fieldElements.excludePatternModeSelect) {
+    return undefined;
+  }
+  const mode = fieldElements.excludePatternModeSelect.value;
+  if (mode === "inherit") {
+    return undefined;
+  }
+  if (mode === "none") {
+    return null;
+  }
+  const custom = getFieldValue(fieldElements.excludePatternCustomInput).trim();
+  if (!custom) {
+    throw new Error("Enter an exclude regex or choose inherit/none.");
+  }
+  return custom;
+}
+
+export function populateExcludePattern(fieldElements, excludePattern) {
+  if (!fieldElements.excludePatternModeSelect) {
+    return;
+  }
+  if (excludePattern === null) {
+    fieldElements.excludePatternModeSelect.value = "none";
+  } else if (excludePattern === undefined) {
+    fieldElements.excludePatternModeSelect.value = "inherit";
+    setFieldValue(fieldElements.excludePatternCustomInput, "");
+  } else {
+    fieldElements.excludePatternModeSelect.value = "custom";
+    setFieldValue(fieldElements.excludePatternCustomInput, excludePattern);
+  }
+  updateExcludePatternFieldVisibility(fieldElements);
+}
+
+export function readRunAt(fieldElements) {
+  const value = fieldElements.runAtSelect?.value;
+  if (!value || value === "document_start") {
+    return undefined;
+  }
+  return value;
+}
+
+export function populateRunAt(fieldElements, runAt) {
+  if (!fieldElements.runAtSelect) {
+    return;
+  }
+  fieldElements.runAtSelect.value = runAt || "document_start";
+}
+
+export function readSandbox(fieldElements) {
+  const value = fieldElements.sandboxSelect?.value;
+  if (!value || value === "main") {
+    return undefined;
+  }
+  return value;
+}
+
+export function populateSandbox(fieldElements, sandbox) {
+  if (!fieldElements.sandboxSelect) {
+    return;
+  }
+  fieldElements.sandboxSelect.value = sandbox || "main";
+}
+
 export function readParameterFields(fieldElements) {
   const mode = fieldElements.parameterModeSelect.value;
   if (mode === "single") {
     const parameter = readSingleParameter(fieldElements.singleParameterFields);
-    return parameter ? { parameter } : {};
+    if (!parameter) {
+      return {};
+    }
+    const { name, ...rest } = parameter;
+    return { params: { [name || "value"]: rest } };
   }
   if (mode === "multiple") {
     const parameters = readMultipleParameters(fieldElements.multipleParametersList);
-    return parameters ? { parameters } : {};
+    return parameters ? { params: parameters } : {};
   }
   return {};
 }
@@ -343,13 +529,9 @@ export function readParameterFields(fieldElements) {
 export function populateParameterFields(fieldElements, node) {
   fieldElements.multipleParametersList.replaceChildren();
   const params =
-    node.params ||
-    (node.parameters && typeof node.parameters === "object" ? node.parameters : null);
+    node.params && typeof node.params === "object" ? node.params : null;
 
-  if (node.parameter && !Array.isArray(node.parameter)) {
-    fieldElements.parameterModeSelect.value = "single";
-    fillSingleParameter(fieldElements.singleParameterFields, node.parameter);
-  } else if (params) {
+  if (params) {
     const entries = Object.entries(params);
     if (entries.length === 1) {
       fieldElements.parameterModeSelect.value = "single";
@@ -399,26 +581,24 @@ export function clearNavParamsFields(fieldElements) {
   fieldElements.navParamsList.replaceChildren();
 }
 
-/** @deprecated use populateNavParamsFields */
-export function populateExtractFields(fieldElements, extract) {
-  populateNavParamsFields(fieldElements, extract);
-}
-
-/** @deprecated use readNavParamsFields */
-export function readExtractFields(fieldElements) {
-  return readNavParamsFields(fieldElements);
-}
-
-/** @deprecated use clearNavParamsFields */
-export function clearExtractFields(fieldElements) {
-  clearNavParamsFields(fieldElements);
-}
-
 export function getBuilderFieldElements(root = document) {
   return {
     hostPatternModeSelect: root.getElementById("host-pattern-mode"),
     hostPatternCustomInput: root.getElementById("host-pattern-custom"),
     hostPatternCustomField: root.getElementById("host-pattern-custom-field"),
+    excludePatternModeSelect: root.getElementById("exclude-pattern-mode"),
+    excludePatternCustomInput: root.getElementById("exclude-pattern-custom"),
+    excludePatternCustomField: root.getElementById("exclude-pattern-custom-field"),
+    runAtField: root.getElementById("run-at-field"),
+    runAtSelect: root.getElementById("link-run-at"),
+    sandboxField: root.getElementById("sandbox-field"),
+    sandboxSelect: root.getElementById("link-sandbox"),
+    framesSection: root.getElementById("frames-section"),
+    framesModeSelect: root.getElementById("frames-mode"),
+    framesCustomFields: root.getElementById("frames-custom-fields"),
+    framesTopInput: root.getElementById("frames-top"),
+    framesNestingInput: root.getElementById("frames-nesting-level"),
+    framesMatchInput: root.getElementById("frames-match"),
     parameterModeSelect: root.getElementById("parameter-mode"),
     singleParameterFields: root.getElementById("single-parameter-fields"),
     multipleParametersPanel: root.getElementById("multiple-parameters-panel"),
@@ -427,10 +607,6 @@ export function getBuilderFieldElements(root = document) {
     navParamsSection: root.getElementById("nav-params-section"),
     navParamsList: root.getElementById("nav-params-list"),
     addNavParamBtn: root.getElementById("add-nav-param-btn"),
-    // Legacy aliases used by older builder markup during rename.
-    extractSection: root.getElementById("nav-params-section"),
-    extractList: root.getElementById("nav-params-list"),
-    addExtractBtn: root.getElementById("add-nav-param-btn"),
     parametersSection: root.getElementById("parameters-section"),
   };
 }

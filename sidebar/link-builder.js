@@ -4,6 +4,16 @@ import {
   updateParameterModeVisibility,
   readHostPattern,
   populateHostPattern,
+  readExcludePattern,
+  populateExcludePattern,
+  readRunAt,
+  populateRunAt,
+  readSandbox,
+  populateSandbox,
+  readFramesFields,
+  populateFramesFields,
+  clearFramesFields,
+  updateFramesFieldVisibility,
   readParameterFields,
   populateParameterFields,
   clearParameterFields,
@@ -13,14 +23,19 @@ import {
   getBuilderFieldElements,
   setFieldVisible,
 } from "./link-builder-fields.js";
-import { getFieldValue, setFieldValue } from "../lib/codemirror-fields.bundle.js";
+import {
+  getFieldValue,
+  setFieldValue,
+  setFieldPlaceholder,
+} from "../lib/codemirror-fields.bundle.js";
 import { ensureLinkId } from "../lib/link-catalog.js";
-import { defaultScriptName, normalizeLeafNode, normalizeScriptInput } from "../lib/link-model.js";
-import { StorageKeys } from "../lib/storage-keys.js";
+import { normalizeLeafNode, normalizeScriptInput } from "../lib/link-model.js";
+import { getBrowsingTabPrefill } from "./link-quick-add.js";
 
+//run scriptlets have no `open`, so the only allowed value is empty
 const NAV_OPTIONS = {
-  scriptlet: [
-    { value: "", label: "Default" },
+  scriptlet: [{ value: "", label: "Not applicable (runs in place)" }],
+  "scriptlet-url": [
     { value: "same-tab", label: "Same tab" },
     { value: "tab", label: "New tab (foreground)" },
     { value: "background", label: "New tab (background)" },
@@ -40,208 +55,45 @@ const NAV_OPTIONS = {
   ],
 };
 
+const TYPE_HINTS = {
+  scriptlet:
+    "Runs the script on the target page. Nothing is opened; use console output or page side effects. Eligible for inject on load.",
+  "scriptlet-url":
+    "Runs the script, then opens the URL it returns. The script must return (or evaluate to) a URL string. Not eligible for inject on load.",
+  navigate: "Opens a fixed path or absolute URL.",
+  "derived-url":
+    "Opens a URL template, filling {tokens} from navParams derived from the page or typed in the popup.",
+};
+
+const CODE_LABELS = {
+  scriptlet: "Script",
+  "scriptlet-url": "Navigation script",
+};
+
+const CODE_PLACEHOLDERS = {
+  scriptlet: "JS to run on the page",
+  "scriptlet-url": "Must return a URL",
+};
+
 function paramsFromFormFields(parameterFields) {
   if (parameterFields.params) {
     return parameterFields.params;
-  }
-  if (parameterFields.parameters) {
-    return parameterFields.parameters;
-  }
-  if (parameterFields.parameter) {
-    const { name, ...rest } = parameterFields.parameter;
-    return { [name || "value"]: rest };
   }
   return undefined;
 }
 
 function inferBuilderType(node) {
   if (node.code) {
-    return "scriptlet";
+    return node.open ? "scriptlet-url" : "scriptlet";
   }
-  if (node.navParams || node.extract || (node.url && /\{[^}]+\}/.test(node.url))) {
+  if (node.navParams || (node.url && /\{[^}]+\}/.test(node.url))) {
     return "derived-url";
   }
   return "navigate";
 }
 
 function openForBuilderSelect(node) {
-  const open = node.open ?? node.nav;
-  if (open === "foreground") return "tab";
-  if (open === "fetch") return "download";
-  return open || "";
-}
-
-function defaultUrlName(path, existingCount) {
-  try {
-    if (/^https?:\/\//i.test(path)) {
-      const url = new URL(path);
-      const suffix = url.pathname !== "/" ? url.pathname : "";
-      return `Open ${url.hostname}${suffix}`.slice(0, 72);
-    }
-    const leaf = path.split(/[/?#]/).filter(Boolean).pop() || "page";
-    return `Go to ${leaf}`;
-  } catch {
-    return `Custom link ${existingCount + 1}`;
-  }
-}
-
-export function buildQuickLinkNode(
-  rawInput,
-  nameInput,
-  existingNodes = [],
-  mode = "link"
-) {
-  const input = String(rawInput ?? "").trim();
-  if (!input) {
-    throw new Error("Paste a script or URL before adding an action.");
-  }
-
-  if (mode === "link") {
-    const node = {
-      name: nameInput.trim() || defaultUrlName(input, existingNodes.length),
-      url: input,
-      open: input.startsWith("/") ? "same-tab" : "tab",
-    };
-    return ensureLinkId(node);
-  }
-
-  const code = normalizeScriptInput(input);
-  const scriptlets = existingNodes.filter((node) => node.code && !node.url);
-  return ensureLinkId({
-    name: nameInput.trim() || defaultScriptName(code, scriptlets),
-    code,
-  });
-}
-
-export function pathFromTabUrl(urlString) {
-  try {
-    const url = new URL(urlString);
-    if (!/^https?:$/i.test(url.protocol)) {
-      return urlString;
-    }
-    return `${url.pathname}${url.search}${url.hash}` || "/";
-  } catch {
-    return urlString;
-  }
-}
-
-export function hostPatternFromUrl(urlString) {
-  try {
-    const hostname = new URL(urlString).hostname;
-    if (!hostname) {
-      return null;
-    }
-    return `^${hostname.replace(/\./g, "\\.")}$`;
-  } catch {
-    return null;
-  }
-}
-
-export function buildPathTemplateFromUrl(urlString) {
-  try {
-    const url = new URL(urlString);
-    if (!/^https?:$/i.test(url.protocol)) {
-      return {
-        url: urlString,
-      };
-    }
-
-    const paramEntries = [...new URLSearchParams(url.search).entries()];
-    const pathname = url.pathname || "/";
-    const hash = url.hash || "";
-
-    if (paramEntries.length === 0) {
-      return {
-        url: `${pathname}${hash}`,
-      };
-    }
-
-    const params = {};
-    const queryParts = [];
-    for (const [name, value] of paramEntries) {
-      queryParts.push(`${encodeURIComponent(name)}={${name}}`);
-      params[name] = { default: value, placeholder: name };
-    }
-
-    const urlTemplate = `${pathname}?${queryParts.join("&")}${hash}`;
-    return { url: urlTemplate, params };
-  } catch {
-    return {
-      url: pathFromTabUrl(urlString),
-    };
-  }
-}
-
-export function buildPrefillFromTab(tab) {
-  if (!tab?.url || !/^https?:\/\//i.test(tab.url)) {
-    return null;
-  }
-
-  const { url, params } = buildPathTemplateFromUrl(tab.url);
-  const title = tab.title?.trim() || defaultUrlName(url, 0);
-  return {
-    name: title,
-    displayName: title,
-    url,
-    params,
-    match: hostPatternFromUrl(tab.url),
-    absoluteUrl: tab.url,
-  };
-}
-
-export async function captureTabPrefillForBuilder() {
-  let [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-  if (!buildPrefillFromTab(tab)) {
-    [tab] = await browser.tabs.query({ active: true, lastFocusedWindow: true });
-  }
-  return buildPrefillFromTab(tab);
-}
-
-async function findBrowsingTab() {
-  const windows = await browser.windows.getAll({ populate: true, windowTypes: ["normal"] });
-  const ordered = [...windows].sort((a, b) => Number(b.focused) - Number(a.focused));
-
-  for (const win of ordered) {
-    const activeTab = win.tabs?.find((tab) => tab.active && buildPrefillFromTab(tab));
-    if (activeTab) {
-      return activeTab;
-    }
-  }
-
-  for (const win of ordered) {
-    const browsable = win.tabs?.find((tab) => buildPrefillFromTab(tab));
-    if (browsable) {
-      return browsable;
-    }
-  }
-
-  const tabs = await browser.tabs.query({ url: ["http://*/*", "https://*/*"] });
-  if (tabs.length === 0) {
-    return null;
-  }
-
-  return tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0];
-}
-
-export async function getBrowsingTabPrefill() {
-  return buildPrefillFromTab(await findBrowsingTab());
-}
-
-export async function consumeBuilderPrefill() {
-  const key = StorageKeys.LINK_BUILDER_PREFILL_KEY;
-  const stored = await browser.storage.session.get(key);
-  if (Object.prototype.hasOwnProperty.call(stored, key)) {
-    const prefill = stored[key];
-    await browser.storage.session.remove(key);
-    if (prefill) {
-      return prefill;
-    }
-  }
-  return getBrowsingTabPrefill();
-}
-
-export async function getTabPrefill() {
-  return getBrowsingTabPrefill();
+  return node.open || "";
 }
 
 export function getBuilderFormElements(root = document) {
@@ -251,8 +103,9 @@ export function getBuilderFormElements(root = document) {
     sectionNewInput: root.getElementById("link-section-new"),
     sectionNewField: root.getElementById("link-section-new-field"),
     typeSelect: root.getElementById("link-type"),
+    typeHint: root.getElementById("link-type-hint"),
+    codeLabel: root.getElementById("link-code-label"),
     nameInput: root.getElementById("link-name"),
-    displayNameInput: root.getElementById("link-display-name"),
     tooltipInput: root.getElementById("link-tooltip"),
     codeInput: root.getElementById("link-code"),
     pathInput: root.getElementById("link-path"),
@@ -306,15 +159,15 @@ export function buildLinkNodeFromForm(form) {
   if (form.editId) {
     draft.id = form.editId;
   }
-  if (form.displayName.trim()) {
-    draft.displayName = form.displayName.trim();
-  }
   if (form.tooltip.trim()) {
     draft.tooltip = form.tooltip.trim();
   }
 
   if (form.match !== undefined) {
     draft.match = form.match;
+  }
+  if (form.exclude !== undefined) {
+    draft.exclude = form.exclude;
   }
 
   const searchTags = parseSearchTags(form.searchTags);
@@ -324,7 +177,7 @@ export function buildLinkNodeFromForm(form) {
 
   const params = paramsFromFormFields(form);
 
-  if (type === "scriptlet") {
+  if (type === "scriptlet" || type === "scriptlet-url") {
     if (params) {
       draft.params = params;
     }
@@ -333,8 +186,21 @@ export function buildLinkNodeFromForm(form) {
       throw new Error("Script code is required.");
     }
     draft.code = code;
-    if (form.nav.trim()) {
-      draft.open = form.nav.trim();
+    if (type === "scriptlet-url") {
+      const open = form.nav.trim();
+      if (!open) {
+        throw new Error("Open mode is required for navigation scriptlets.");
+      }
+      draft.open = open;
+    }
+    if (form.frames !== undefined) {
+      draft.frames = form.frames;
+    }
+    if (type === "scriptlet" && form.runAt) {
+      draft.runAt = form.runAt;
+    }
+    if (form.sandbox) {
+      draft.sandbox = form.sandbox;
     }
   } else if (type === "navigate") {
     const url = form.url.trim() || form.path.trim();
@@ -364,8 +230,7 @@ export function buildLinkNodeFromForm(form) {
     throw new Error(`Unknown link type: ${type}`);
   }
 
-  const node = normalizeLeafNode(draft);
-  return form.editId ? node : ensureLinkId(node);
+  return ensureLinkId(normalizeLeafNode(draft));
 }
 
 export function readTargetSection(elements) {
@@ -426,15 +291,22 @@ export function readBuilderForm(elements) {
   const parameterFields = readParameterFields(elements.fieldElements);
   const navParams = readNavParamsFields(elements.fieldElements);
   const match = readHostPattern(elements.fieldElements);
+  const exclude = readExcludePattern(elements.fieldElements);
+  const runAt = readRunAt(elements.fieldElements);
+  const sandbox = readSandbox(elements.fieldElements);
+  const frames = readFramesFields(elements.fieldElements);
 
   return {
     editId: elements.editIdInput.value.trim() || null,
     sectionName: readTargetSection(elements),
     type: elements.typeSelect.value,
     name: elements.nameInput.value,
-    displayName: elements.displayNameInput.value,
     tooltip: elements.tooltipInput?.value || "",
     match,
+    exclude,
+    runAt,
+    sandbox,
+    frames,
     searchTags: elements.searchTagsInput.value,
     code: getFieldValue(elements.codeInput),
     path: elements.pathInput.value,
@@ -451,11 +323,14 @@ export function populateBuilderForm(elements, node, sectionName, sectionNames) {
   populateSectionSelect(elements, sectionNames, sectionName);
   elements.typeSelect.value = inferBuilderType(normalized);
   elements.nameInput.value = normalized.name || "";
-  elements.displayNameInput.value = normalized.displayName || "";
   if (elements.tooltipInput) {
     elements.tooltipInput.value = normalized.tooltip || "";
   }
   populateHostPattern(elements.fieldElements, normalized.match);
+  populateExcludePattern(elements.fieldElements, normalized.exclude);
+  populateRunAt(elements.fieldElements, normalized.runAt);
+  populateSandbox(elements.fieldElements, normalized.sandbox);
+  populateFramesFields(elements.fieldElements, normalized.frames);
   elements.searchTagsInput.value = Array.isArray(normalized.searchTags)
     ? normalized.searchTags.join(", ")
     : "";
@@ -477,11 +352,14 @@ export function clearBuilderForm(elements, sectionNames, defaultSection) {
   populateSectionSelect(elements, sectionNames, defaultSection);
   elements.typeSelect.value = "scriptlet";
   elements.nameInput.value = "";
-  elements.displayNameInput.value = "";
   if (elements.tooltipInput) {
     elements.tooltipInput.value = "";
   }
   populateHostPattern(elements.fieldElements, undefined);
+  populateExcludePattern(elements.fieldElements, undefined);
+  populateRunAt(elements.fieldElements, undefined);
+  populateSandbox(elements.fieldElements, undefined);
+  clearFramesFields(elements.fieldElements);
   elements.searchTagsInput.value = "";
   setFieldValue(elements.codeInput, "");
   elements.pathInput.value = "";
@@ -499,7 +377,6 @@ export function applyTabPrefill(elements, prefill, type = "navigate") {
   const resolvedType = prefill.builderType || type;
   elements.typeSelect.value = resolvedType;
   elements.nameInput.value = prefill.name || "";
-  elements.displayNameInput.value = prefill.displayName || prefill.name || "";
   elements.urlInput.value =
     prefill.url ||
     prefill.path ||
@@ -526,16 +403,6 @@ export function applyTabPrefill(elements, prefill, type = "navigate") {
       }
     } else if (prefill.navParams) {
       populateNavParamsFields(elements.fieldElements, prefill.navParams);
-    } else if (prefill.params || prefill.parameters || prefill.parameter) {
-      const normalized = normalizeLeafNode({
-        name: prefill.name || "prefill",
-        url: prefill.url || prefill.path || "/",
-        open: "tab",
-        ...(prefill.params ? { params: prefill.params } : {}),
-        ...(prefill.parameters ? { parameters: prefill.parameters } : {}),
-        ...(prefill.parameter ? { parameter: prefill.parameter } : {}),
-      });
-      populateNavParamsFields(elements.fieldElements, normalized.navParams);
     } else {
       clearNavParamsFields(elements.fieldElements);
     }
@@ -559,11 +426,15 @@ function applyPrefillIfEmpty(elements, prefill, type) {
   if (!elements.nameInput.value.trim()) {
     elements.nameInput.value = prefill.name || "";
   }
-  if (!elements.displayNameInput.value.trim()) {
-    elements.displayNameInput.value = prefill.displayName || prefill.name || "";
-  }
   if (!elements.urlInput.value.trim()) {
     elements.urlInput.value = prefill.url || prefill.path || "";
+  }
+
+  //template tokens are useless without the matching navParam rows
+  const hasNavParamRows =
+    elements.fieldElements.navParamsList.querySelector(".nav-param-row") !== null;
+  if (prefill.navParams && !hasNavParamRows) {
+    populateNavParamsFields(elements.fieldElements, prefill.navParams);
   }
 
   if (
@@ -576,7 +447,9 @@ function applyPrefillIfEmpty(elements, prefill, type) {
 
 export function updateBuilderFieldVisibility(elements) {
   const type = elements.typeSelect.value;
-  const isScriptlet = type === "scriptlet";
+  const isRunScriptlet = type === "scriptlet";
+  const isNavScriptlet = type === "scriptlet-url";
+  const isScriptlet = isRunScriptlet || isNavScriptlet;
   const isNavigate = type === "navigate";
   const isDerived = type === "derived-url";
   const isUrlType = isNavigate || isDerived;
@@ -584,22 +457,30 @@ export function updateBuilderFieldVisibility(elements) {
   setFieldVisible(elements.codeField, isScriptlet);
   setFieldVisible(elements.pathField, false);
   setFieldVisible(elements.urlField, isUrlType);
-  setFieldVisible(elements.navField, isUrlType);
+  setFieldVisible(elements.navField, isNavScriptlet || isUrlType);
   setFieldVisible(elements.fieldElements.parametersSection, isScriptlet);
+  setFieldVisible(elements.fieldElements.framesSection, isScriptlet);
+  setFieldVisible(elements.fieldElements.runAtField, isRunScriptlet);
+  setFieldVisible(elements.fieldElements.sandboxField, isScriptlet);
   setFieldVisible(elements.fieldElements.navParamsSection, isUrlType);
 
-  if (isUrlType) {
-    setNavOptions(
-      elements.navSelect,
-      type,
-      isNavigate && !elements.navSelect.value ? "same-tab" : elements.navSelect.value
-    );
-    elements.navSelect.required = isDerived;
-  } else {
-    elements.navSelect.required = false;
+  if (elements.typeHint) {
+    elements.typeHint.textContent = TYPE_HINTS[type] || "";
+  }
+  if (isScriptlet) {
+    if (elements.codeLabel) {
+      elements.codeLabel.textContent = CODE_LABELS[type];
+    }
+    setFieldPlaceholder(elements.codeInput, CODE_PLACEHOLDERS[type]);
   }
 
+  //re-running this on every type change is what drops a stale `open` from a run scriptlet
+  const fallbackOpen = isNavScriptlet || isNavigate ? "same-tab" : "";
+  setNavOptions(elements.navSelect, type, elements.navSelect.value || fallbackOpen);
+  elements.navSelect.required = isNavScriptlet || isDerived;
+
   updateHostPatternFieldVisibility(elements.fieldElements);
+  updateFramesFieldVisibility(elements.fieldElements);
   updateParameterModeVisibility(elements.fieldElements);
 }
 

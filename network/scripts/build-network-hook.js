@@ -35,7 +35,7 @@ ${pageSource}
 }
 
 export function buildLogBridgeBootstrap(logToken) {
-  return \`(function(){var LOG_TOKEN=\${JSON.stringify(logToken)};window.addEventListener("message",function(event){if(event.source!==window)return;var data=event.data;if(!data||data.source!=="complex-linker-network-hook"||data.token!==LOG_TOKEN)return;if(data.type==="log"){browser.runtime.sendMessage({type:"NETWORK_RULE_LOG",entry:data.entry}).catch(function(){});return;}if(data.type==="sharedState"){browser.runtime.sendMessage({type:"NETWORK_SHARED_STATE",persistent:data.persistent,tab:data.tab}).catch(function(){});}});})();\`;
+  return \`(function(){var LOG_TOKEN=\${JSON.stringify(logToken)};window.addEventListener("message",function(event){if(event.source!==window)return;var data=event.data;if(!data||(data.source!=="hackery-lab-network-hook"&&data.source!=="complex-linker-network-hook")||data.token!==LOG_TOKEN)return;if(data.type==="log"){browser.runtime.sendMessage({type:"NETWORK_RULE_LOG",entry:data.entry}).catch(function(){});return;}if(data.type==="sharedState"){browser.runtime.sendMessage({type:"NETWORK_SHARED_STATE",persistent:data.persistent,tab:data.tab}).catch(function(){});}});})();\`;
 }
 `;
 

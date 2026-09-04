@@ -1,6 +1,6 @@
 # Network rules plugin
 
-Self-contained network-rules feature pack for Complex Linker. Designed so the
+Self-contained network-rules feature pack for Hackery Lab. Designed so the
 tree can become its own Firefox extension later with minimal glue.
 
 ## Layout
@@ -33,7 +33,7 @@ const handlers = {
 };
 ```
 
-Also forward `storage.onChanged` / `tabs.onRemoved`, and use `Network.getBadgeMark(tabId)` when refreshing the action badge. CSP stripping stays in `lib/csp-disable.js` (shared with the sidebar toggle).
+Also forward `storage.onChanged` / `tabs.onRemoved`, and use `Network.getBadgeMark(tabId)` when refreshing the action badge. CSP compose lives in `lib/csp-compose.js` (nonce origins + DNR); meta strip helpers remain in `lib/csp-disable.js`.
 
 Import the plugin from the top level of the background script and do not defer it behind an `await`: `engine/network-webrequest.js` registers its `webRequest` listeners at module load, which is what makes them survive event-page suspension in Firefox.
 
@@ -68,7 +68,7 @@ non-fetch scripting is needed later.
 Modify rules run field replacements first, then the phase script.
 
 **Privileged headers:** Set/replace of `Cookie`, `Origin`, or `Referer` on
-fetch/XHR is encoded as `x-complexlinker-*` in the page hook; webRequest
+fetch/XHR is encoded as `x-hackerylab-*` in the page hook; webRequest
 rewrites those to the real names on `onBeforeSendHeaders` (Greasemonkey-style).
 See `encodePrivilegedRequestHeaders` / `rewritePrivilegedRequestHeaders` in
 `engine/network-rule-engine-core.js`.
@@ -92,8 +92,8 @@ synchronous XHR always passes through immediately.
 
 ## Standalone extraction checklist
 
-- Copy `network/` (and `lib/csp-disable.js` if CSP stripping stays).
+- Copy `network/` (and `lib/csp-compose.js` / `lib/csp-disable.js` / `lib/csp-nonce.js` if CSP rewrite stays).
 - New manifest: `permissions` + `host_permissions` from the plugin exports, `devtools_page` → `ui/rules.html`, `background: { scripts: ["background.js"], type: "module" }`.
-- Taking `lib/csp-disable.js` along also needs `declarativeNetRequestWithHostAccess` and `alarms`, which are host permissions rather than plugin ones — `engine/network-webrequest.js` imports the module for meta-tag stripping, so dropping it means removing that call too.
-- Replace host settings merge with local GET/SET for `networkHooksEnabled` only.
-- Drop sidebar Network toggle; use the DevTools panel header / enabled checkbox.
+- Taking CSP compose along also needs `declarativeNetRequestWithHostAccess` and `alarms` — `engine/network-webrequest.js` imports compose + meta-tag helpers.
+- Replace host settings merge with local GET/SET for `networkHooksEnabled` / arm session.
+- Drop the sidebar arm/nonce UI; use the DevTools panel header / enabled checkbox.

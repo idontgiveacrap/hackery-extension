@@ -1,14 +1,26 @@
 {
-  "name": "complex-linker",
+  "name": "hackery-lab",
   "private": true,
   "scripts": {
     "build:network-hook": "node network/scripts/build-network-hook.js",
     "test:network-hook": "npm run build:network-hook && node network/scripts/test-early-hook.js",
+    "test:link-storage": "node scripts/test-link-storage.js",
+    "test:link-apply": "node scripts/test-link-apply.js",
+    "test:csp-nonce": "node scripts/test-csp-nonce.js",
+    "test:csp-compose": "node scripts/test-csp-compose.js",
+    "serve:csp-fixture": "node scripts/serve-csp-fixture.js",
+    "probe:csp-firefox": "node scripts/probe-csp-firefox.js",
+    "test:undefined": "node scripts/scan-undefined.js",
     "build:codemirror": "node scripts/build-codemirror.js",
-    "build": "npm run build:network-hook && npm run build:codemirror"
+    "build": "npm run build:network-hook && npm run build:codemirror",
+    "pack": "npm run build && webpack --mode production"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "copy-webpack-plugin": "^14.0.0",
+    "esbuild": "^0.28.1",
+    "terser-webpack-plugin": "^5.6.1",
+    "webpack": "^5.109.2",
+    "webpack-cli": "^7.2.2"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -16,11 +28,9 @@
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/language": "^6.12.4",
-    "@codemirror/legacy-modes": "^6.5.3",
     "@codemirror/lint": "^6.9.7",
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
-    "@codemirror/view": "^6.43.7",
-    "codemirror": "^6.0.2"
+    "@codemirror/view": "^6.43.7"
   }
 }

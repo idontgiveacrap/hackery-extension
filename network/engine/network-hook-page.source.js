@@ -1,5 +1,6 @@
   const root = typeof globalThis !== "undefined" ? globalThis : window;
-  const prevHook = root.__ComplexLinkerNetworkHook;
+  const prevHook =
+    root.__HackeryLabNetworkHook || root.__ComplexLinkerNetworkHook;
   const injectedTabUrl =
     typeof sharedStateBundle?.tabUrl === "string" ? sharedStateBundle.tabUrl : "";
   if (
@@ -95,7 +96,7 @@
   function postSharedStateUpdate() {
     root.postMessage(
       {
-        source: "complex-linker-network-hook",
+        source: "hackery-lab-network-hook",
         type: "sharedState",
         token: logToken,
         persistent: stateView.persistent,
@@ -108,7 +109,7 @@
   function postLog(entry) {
     root.postMessage(
       {
-        source: "complex-linker-network-hook",
+        source: "hackery-lab-network-hook",
         type: "log",
         token: logToken,
         entry: { ...entry, ts: Date.now() },
@@ -293,8 +294,9 @@
 
   function objectToHeaders(headers) {
     const next = new Headers();
-    // Cookie/Origin/Referer are forbidden in page JS — send as x-complexlinker-*
-    // and let webRequest rewrite them (see rewritePrivilegedRequestHeaders).
+    // Cookie/Origin/Referer/User-Agent are forbidden in page JS — send as
+    // x-hackerylab-* and let webRequest rewrite them (see
+    // rewritePrivilegedRequestHeaders).
     for (const [key, value] of Object.entries(
       encodePrivilegedRequestHeaders(headers)
     )) {
@@ -366,7 +368,8 @@
     }, 0);
   }
 
-  const earlyHook = root.__ComplexLinkerNetworkEarlyHook;
+  const earlyHook =
+    root.__HackeryLabNetworkEarlyHook || root.__ComplexLinkerNetworkEarlyHook;
   const natives = prevHook?.natives || earlyHook?.natives || {
     fetch: root.fetch.bind(root),
     xhrOpen: XMLHttpRequest.prototype.open,
@@ -380,7 +383,7 @@
   XMLHttpRequest.prototype.setRequestHeader = natives.xhrSetRequestHeader;
 
   const origFetch = natives.fetch;
-  root.fetch = async function ComplexLinkerFetch(input, init) {
+  root.fetch = async function HackeryLabFetch(input, init) {
     const isHookOriginated = hookDepth > 0;
     hookDepth += 1;
     try {
@@ -532,14 +535,14 @@
   const origSend = natives.xhrSend;
   const origSetRequestHeader = natives.xhrSetRequestHeader;
 
-  XMLHttpRequest.prototype.open = function ComplexLinkerOpen(
+  XMLHttpRequest.prototype.open = function HackeryLabOpen(
     method,
     url,
     async,
     user,
     password
   ) {
-    this.__ComplexLinker = {
+    this.__HackeryLab = {
       method: String(method || "GET").toUpperCase(),
       url: String(url),
       async: async !== false,
@@ -550,21 +553,23 @@
     return origOpen.call(this, method, url, async, user, password);
   };
 
-  XMLHttpRequest.prototype.setRequestHeader = function ComplexLinkerSetHeader(
+  XMLHttpRequest.prototype.setRequestHeader = function HackeryLabSetHeader(
     name,
     value
   ) {
-    if (this.__ComplexLinker) {
+    if (this.__HackeryLab) {
+      this.__HackeryLab.headers[name] = value;
+    } else if (this.__ComplexLinker) {
       this.__ComplexLinker.headers[name] = value;
     }
     return origSetRequestHeader.call(this, name, value);
   };
 
-  XMLHttpRequest.prototype.send = function ComplexLinkerSend(body) {
+  XMLHttpRequest.prototype.send = function HackeryLabSend(body) {
     const isHookOriginated = hookDepth > 0;
     hookDepth += 1;
     try {
-    const meta = this.__ComplexLinker || {
+    const meta = this.__HackeryLab || this.__ComplexLinker || {
       method: "GET",
       url: "",
       headers: {},
@@ -660,7 +665,7 @@
 
     const xhr = this;
     const origReady = xhr.onreadystatechange;
-    xhr.onreadystatechange = function ComplexLinkerReadyState() {
+    xhr.onreadystatechange = function HackeryLabReadyState() {
       if (xhr.readyState === 4) {
         try {
           const responseCtx = processRules(
@@ -709,7 +714,7 @@
     }
   };
 
-  root.__ComplexLinkerNetworkHook = {
+  root.__HackeryLabNetworkHook = {
     version,
     logToken,
     tabUrl: injectedTabUrl,

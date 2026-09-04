@@ -6,6 +6,8 @@
 (function () {
   const root = globalThis;
   if (
+    root.__HackeryLabNetworkHook ||
+    root.__HackeryLabNetworkEarlyHook ||
     root.__ComplexLinkerNetworkHook ||
     root.__ComplexLinkerNetworkEarlyHook
   ) {
@@ -33,10 +35,10 @@
    * @param {RequestInit} [init]
    * @returns {Promise<Response>}
    */
-  function ComplexLinkerEarlyFetch(input, init) {
+  function HackeryLabEarlyFetch(input, init) {
     return readyOrTimeout.then(() => {
       const nextFetch =
-        root.fetch === ComplexLinkerEarlyFetch ? natives.fetch : root.fetch;
+        root.fetch === HackeryLabEarlyFetch ? natives.fetch : root.fetch;
       return nextFetch(input, init);
     });
   }
@@ -50,8 +52,8 @@
    * @param {string} [password]
    * @returns {void}
    */
-  function ComplexLinkerEarlyOpen(method, url, async, user, password) {
-    this.__ComplexLinker = {
+  function HackeryLabEarlyOpen(method, url, async, user, password) {
+    this.__HackeryLab = {
       method: String(method || "GET").toUpperCase(),
       url: String(url),
       async: async !== false,
@@ -68,9 +70,9 @@
    * @param {string} value
    * @returns {void}
    */
-  function ComplexLinkerEarlySetRequestHeader(name, value) {
-    if (this.__ComplexLinker) {
-      this.__ComplexLinker.headers[name] = value;
+  function HackeryLabEarlySetRequestHeader(name, value) {
+    if (this.__HackeryLab) {
+      this.__HackeryLab.headers[name] = value;
     }
     return natives.xhrSetRequestHeader.call(this, name, value);
   }
@@ -81,24 +83,23 @@
    * @param {Document | XMLHttpRequestBodyInit | null} [body]
    * @returns {void}
    */
-  function ComplexLinkerEarlySend(body) {
-    if (this.__ComplexLinker?.async === false) {
+  function HackeryLabEarlySend(body) {
+    if (this.__HackeryLab?.async === false) {
       return natives.xhrSend.call(this, body);
     }
     const xhr = this;
     readyOrTimeout.then(() => {
       const nextSend =
-        XMLHttpRequest.prototype.send === ComplexLinkerEarlySend
+        XMLHttpRequest.prototype.send === HackeryLabEarlySend
           ? natives.xhrSend
           : XMLHttpRequest.prototype.send;
       nextSend.call(xhr, body);
     });
   }
 
-  root.__ComplexLinkerNetworkEarlyHook = { natives, release };
-  root.fetch = ComplexLinkerEarlyFetch;
-  XMLHttpRequest.prototype.open = ComplexLinkerEarlyOpen;
-  XMLHttpRequest.prototype.send = ComplexLinkerEarlySend;
-  XMLHttpRequest.prototype.setRequestHeader =
-    ComplexLinkerEarlySetRequestHeader;
+  root.__HackeryLabNetworkEarlyHook = { natives, release };
+  root.fetch = HackeryLabEarlyFetch;
+  XMLHttpRequest.prototype.open = HackeryLabEarlyOpen;
+  XMLHttpRequest.prototype.send = HackeryLabEarlySend;
+  XMLHttpRequest.prototype.setRequestHeader = HackeryLabEarlySetRequestHeader;
 })();

@@ -1,0 +1,1 @@
+browser.devtools.panels.create("Network Rules","/icons/devtools-icon-default-16.png","/network/ui/rules.html").catch(e=>(console.error("Hackery Lab: failed to create Network Rules panel",e),browser.devtools.panels.create("Network Rules","","/network/ui/rules.html")));

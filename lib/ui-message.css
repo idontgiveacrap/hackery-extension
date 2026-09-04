@@ -1,0 +1,28 @@
+.message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 12px;
+}
+
+.message.hidden {
+  display: none;
+}
+
+.message-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.message-action {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}

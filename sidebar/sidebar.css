@@ -1,33 +1,3 @@
-:root {
-  color-scheme: light dark;
-  --bg: #f7f7f8;
-  --panel: #ffffff;
-  --text: #1c1c1e;
-  --muted: #6b7280;
-  --border: #d1d5db;
-  --accent: #81b5a1;
-  --accent-hover: #6aa38f;
-  --folder: #374151;
-  --warn-bg: #fef3c7;
-  --warn-text: #92400e;
-  --sticky-header-height: 0px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1e1e20;
-    --panel: #2a2a2d;
-    --text: #f3f4f6;
-    --muted: #9ca3af;
-    --border: #404045;
-    --accent: #81b5a1;
-    --accent-hover: #98c7b6;
-    --folder: #d1d5db;
-    --warn-bg: #422006;
-    --warn-text: #fde68a;
-  }
-}
-
 * {
   box-sizing: border-box;
 }
@@ -170,11 +140,13 @@ h1 {
 
 .header-toggles {
   display: flex;
-  flex-wrap: nowrap;
+  /* Wraps instead of overflowing: the labels are wordy and the sidebar is narrow. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
+  gap: 6px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .header-toggle,
@@ -201,14 +173,15 @@ h1 {
   cursor: pointer;
 }
 
-.csp-disable-label.is-disabled {
+.header-toggle.is-disabled {
   opacity: 0.55;
   cursor: default;
 }
 
-.csp-disable-label.is-disabled input {
+.header-toggle.is-disabled input {
   cursor: default;
 }
+
 
 .active-tab-status {
   margin: 4px 0 0;
@@ -225,13 +198,6 @@ h1 {
   margin: 0;
   padding: 8px 14px;
   border-radius: 6px;
-  background: var(--warn-bg);
-  color: var(--warn-text);
-  font-size: 12px;
-}
-
-.message.hidden {
-  display: none;
 }
 
 .section-tabs {
@@ -795,6 +761,99 @@ h1 {
   box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 18%, transparent);
 }
 
+.link-inspect-popover {
+  position: fixed;
+  z-index: 120;
+  max-width: min(420px, calc(100vw - 16px));
+  max-height: min(70vh, 480px);
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.link-inspect-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.link-inspect-behavior {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Single grid for every row so the value column lines up down the popover.
+   No column-gap: the per-cell bottom borders must meet to read as one rule. */
+.link-inspect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.link-inspect-grid > * {
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
+/* Every row contributes exactly two cells, so these are the last row. */
+.link-inspect-grid > :nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.link-inspect-key {
+  padding-right: 10px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.link-inspect-value,
+.link-inspect-item {
+  word-break: break-word;
+}
+
+.link-inspect-value.is-ok,
+.link-inspect-item.is-ok {
+  color: var(--accent);
+}
+
+.link-inspect-value.is-warn,
+.link-inspect-item.is-warn {
+  color: var(--danger);
+}
+
+.link-inspect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.link-inspect-item {
+  color: var(--muted);
+}
+
+.link-inspect-pre {
+  margin: 6px 0 0;
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .link-context-menu-item {
   display: block;
   width: 100%;
@@ -1034,6 +1093,12 @@ h1 {
 .folder.is-dragging,
 .section-tab.is-dragging {
   opacity: 0.5;
+}
+
+.section-tab.is-drop-target,
+.folder-title.is-drop-target {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .link-item {
