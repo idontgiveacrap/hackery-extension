@@ -1,6 +1,6 @@
 {
   "ServiceNow": {
-    "match": "\\.service-now\\.com$",
+    "match": "^.*\\.service-now\\.com|.*\\.servicenow\\.com$",
     "children": [
       {
         "id": "40f67a57-3278-4df9-94d8-76b094bc9ea8",
@@ -352,6 +352,52 @@
         "match": null,
         "open": "tab",
         "url": "https://developer.servicenow.com/dev.do#!/reference/next-experience/utah/now-components/now-icon/gallery"
+      },
+      {
+        "id": "d60d3536-789a-46eb-aaf9-d5ffae959901",
+        "name": "Execute MID Server command | ServiceNow",
+        "tooltip": "Run arbitrary command on MID server. Some instances may strip the first line XML tag.",
+        "url": "/ecc_queue.do?sys_id=-1&sysparm_query=payload=%3C?xml%20version=%221.0%22%20encoding=%22UTF-8%22?%3E%0A%3Cparameters%3E%3Cparameter%20name=%22name%22%20value=%22{encode:command}%22/%3E%3Cparameter%20name=%22skip_sensor%22%20value=%22true%22/%3E%3C/parameters%3E%5Eagent=mid.server.{encode:mid_server}%5Equeue=output%5Etopic=Command%5Ename=Run%20cusome%20ad-hoc%20command",
+        "open": "tab",
+        "navParams": {
+          "command": {
+            "placeholder": "powershell, batch, or bash command",
+            "default": "tree"
+          },
+          "mid_server": {
+            "placeholder": "MID-NAME"
+          }
+        },
+        "searchTags": [
+          "MID server",
+          "command",
+          "powershell",
+          "ecc_queue"
+        ]
+      },
+      {
+        "id": "b20d08ca-5fef-4ea3-8096-c9f1def0d7b5",
+        "name": "BG script MID command",
+        "tooltip": "Background script to run arbitrary command on MID server",
+        "url": "/sys.scripts.modern.do?content=(function%20sendCommand(name%2C%20server%2C%20command)%20%7B%0A%20%20%20%20%20%20%20%20var%20ecc_queue%20%3D%20new%20GlideRecord(%22ecc_queue%22)%3B%0A%20%20%20%20%20%20%20%20ecc_queue.initialize()%3B%0A%20%20%20%20%20%20%20%20ecc_queue.agent%20%3D%20%22mid.server.%22%20%2B%20server%3B%0A%20%20%20%20%20%20%20%20ecc_queue.name%20%3D%20name%3B%0A%20%20%20%20%20%20%20%20ecc_queue.queue%20%3D%20%22output%22%3B%0A%20%20%20%20%20%20%20%20ecc_queue.topic%20%3D%20%22Command%22%3B%0A%20%20%20%20%20%20%20%20ecc_queue.payload%20%3D%20'%3C%3Fxml%20version%3D%221.0%22%20encoding%3D%22UTF-8%22%3F%3E%3Cparameters%3E%3Cparameter%20name%3D%22name%22%20value%3D%22'%20%2B%20command%20%2B%20'%22%2F%3E%3C%2Fparameters%3E'%3B%0A%20%20%20%20%20%20%20%20%2F%2FGet%20SysID%20of%20new%20ECC%20Queue%20record%0A%20%20%20%20%20%20%20%20var%20ecc_sysid%20%3D%20ecc_queue.insert()%3B%0A%20%20%20%20%20%20%20%20%2F%2FSet%20Response%20to%20current%20record%20sys_id%0A%20%20%20%20%20%20%20%20ecc_queue.response_to%20%3D%20ecc_sysid%3B%0A%20%20%20%20%20%20%20%20%2F%2FUpdate%20new%20ECC%20Queue%20record%0A%20%20%20%20%20%20%20%20ecc_queue.update()%3B%0A%20%20%20%20%20%20%20%20return%20ecc_sysid%3B%0A%20%20%20%20%7D)('Ad-hoc%20command'%2C%20{mid_server}%2C%20{command})%0A%20%20%20%20%2F%2FGet%20Response%20from%20ECC%20Queue%20that%20was%20linked%20to%20the%20original%20Output%20command%20in%20the%20response_to%20reference%20%0A%20%20%20%20function%20getResponse(ecc_sysid%2C%20att)%20%7B%0A%20%20%20%20%20%20%20%20var%20response_sysid%3B%0A%20%20%20%20%20%20%20%20var%20ecc_response%20%3D%20new%20GlideRecord(%22ecc_queue%22)%3B%0A%20%20%20%20%20%20%20%20%2F%2FGet%20response%20that%20matches%20response%20to%20record%20set%20in%20output%20command%20sent%20earlier%0A%20%20%20%20%20%20%20%20ecc_response.addQuery(%22response_to%22%2C%20ecc_sysid)%3B%0A%20%20%20%20%20%20%20%20ecc_response.addQuery(%22queue%22%2C%20%22input%22)%3B%0A%20%20%20%20%20%20%20%20ecc_response.query()%3B%0A%20%20%20%20%20%20%20%20if%20(ecc_response.next())%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20response_sysid%20%3D%20ecc_response.sys_id%3B%0A%20%20%20%20%20%20%20%20%7D%20else%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20response_sysid%20%3D%20false%3B%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20if%20(response_sysid)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20var%20response_payload_xml%20%3D%20this.getResponsePayload(response_sysid)%3B%0A%20%20%20%20%20%20%20%20%20%20%20%20var%20response_json%20%3D%20this.parseXMLPayload(response_payload_xml)%3B%0A%20%20%20%20%20%20%20%20%20%20%20%20return%20response_json%3B%0A%20%20%20%20%20%20%20%20%7D%20else%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20return%20false%3B%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%7D",
+        "open": "tab",
+        "navParams": {
+          "command": {
+            "placeholder": "powershell, batch, or bash command",
+            "default": "tree"
+          },
+          "mid_server": {
+            "placeholder": "MID-NAME"
+          }
+        },
+        "searchTags": [
+          "MID server",
+          "command",
+          "powershell",
+          "ecc_queue",
+          "background script",
+          "scripts- background"
+        ]
       }
     ]
   },
