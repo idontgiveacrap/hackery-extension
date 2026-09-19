@@ -72,7 +72,8 @@ Open with **F12** / **Ctrl+Shift+I**. These are the inspectors this extension do
 
 - **Inspector** — HTML/CSS: select nodes, search, live-edit markup and styles, pretty-print
 - **Debugger** — JS: sources, breakpoints, pretty-print minified files, search
-- **Console** — runtime JS against the page (and selected iframe)
+- **DOM** — browseable runtime JS values
+- **about pages** — profiles, processes, serviceworkers, debugging, logging, memory, networking, etc
 - **Network** — request/response headers, bodies, timing, replay
 - **Storage** — cookies, local/session storage, IndexedDB, Cache Storage (view and edit)
 
