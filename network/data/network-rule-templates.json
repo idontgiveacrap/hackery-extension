@@ -74,7 +74,7 @@
     {
       "id": "disable-csp",
       "name": "Disable CSP",
-      "description": "Omit Content-Security-Policy on matching documents while network rules are armed. Timer-gated. Isolation headers are left alone unless another rule removes them. Hard-reload after arming.",
+      "description": "Omit Content-Security-Policy on matching documents and remove every <meta http-equiv=\"Content-Security-Policy\"> tag from the HTML, anywhere in the document. Timer-gated. The body edit buffers the response, so matching documents paint later. Isolation headers are left alone unless another rule removes them. Hard-reload after arming.",
       "rule": {
         "name": "Disable CSP",
         "enabled": true,
@@ -92,7 +92,14 @@
         "redirectUrl": "",
         "modify": {
           "urlReplacements": [],
-          "bodyReplacements": [],
+          "bodyReplacements": [
+            {
+              "find": "<meta\\b[^>]*?http-equiv\\s*=\\s*[\"']?content-security-policy(?:-report-only)?[\"']?[^>]*>",
+              "replace": "",
+              "isRegex": true,
+              "flags": "gi"
+            }
+          ],
           "headerReplacements": [],
           "setHeaders": [
             {

@@ -17,6 +17,8 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 
 ## Usage
 
+In multiple places, this extension finds and replaces content. This can be done using an asterisk wildcard or regex. For replacements, you may use regex capture groups either way. For example a match string of "*text" can use the first capture group, which will be whatever matched *. If defining regex, you can define and use capture groups however you wish.
+
 1. Open a tab on the site the action targets (for any item with a regex `match` that matches the URL, the active tab will switch automatically).
 2. Open the **sidebar** via the toolbar button or **Ctrl+Period** (toggle).
 3. Choose an action (badge indicates type):

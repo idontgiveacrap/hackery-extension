@@ -723,6 +723,26 @@ function onHeadersReceived(details) {
   responseHeaders = composed.headers;
   const metaCsp = htmlDocument ? composed.meta : null;
 
+  // CSP edits are removed from the header-rule pass (DNR already stripped the
+  // header, and compose re-adds at most one), so a CSP rule would otherwise
+  // never reach the log and would read as matching nothing. Log it here, where
+  // the compose outcome is known.
+  if (composed.meta) {
+    for (const rule of matching.filter(isCspTouchingRule)) {
+      logWebRequestRule({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        phase: "response",
+        method: ctx?.method || details.method,
+        url: details.url,
+        pageUrl: ctx?.pageUrl || "",
+        resourceType: details.type,
+        outcome: composed.meta.mode === "strip" ? "csp-disabled" : "csp-composed",
+        action: "modify",
+      }, details.tabId);
+    }
+  }
+
   // Recorded for every document, composed or not: a scriptlet's frame targets
   // are chosen by depth and URL, so the answer to "will this frame take an
   // injection" is per frame and per origin, not per tab.

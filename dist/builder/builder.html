@@ -75,7 +75,7 @@
               <span class="field-label">Tab targeting</span>
             </div>
             <label class="field" id="host-pattern-field">
-              <span class="field-label">Host pattern</span>
+              <span class="field-label">Match URLs</span>
               <select id="host-pattern-mode">
                 <option value="inherit">Inherit from section</option>
                 <option value="none">None (active tab)</option>
@@ -83,11 +83,28 @@
               </select>
             </label>
             <label class="field is-hidden" id="host-pattern-custom-field">
-              <span class="field-label">Custom host pattern</span>
+              <span class="field-label">Match regex</span>
               <input
                 id="host-pattern-custom"
                 type="text"
                 placeholder="e.g. \.example\.com$"
+                spellcheck="false"
+              />
+            </label>
+            <label class="field" id="exclude-pattern-field">
+              <span class="field-label">Exclude URLs</span>
+              <select id="exclude-pattern-mode">
+                <option value="inherit">Inherit from section</option>
+                <option value="none">None (do not exclude)</option>
+                <option value="custom">Custom regex</option>
+              </select>
+            </label>
+            <label class="field is-hidden" id="exclude-pattern-custom-field">
+              <span class="field-label">Exclude regex</span>
+              <input
+                id="exclude-pattern-custom"
+                type="text"
+                placeholder="e.g. /login"
                 spellcheck="false"
               />
             </label>
@@ -107,6 +124,24 @@
               </select>
             </label>
             <p id="link-type-hint" class="field-hint type-hint"></p>
+            <label class="field is-hidden" id="run-at-field">
+              <span class="field-label">On-load timing</span>
+              <select id="link-run-at">
+                <option value="document_start">document_start (default)</option>
+                <option value="document_end">document_end (DOM ready)</option>
+                <option value="document_idle">document_idle (after load)</option>
+              </select>
+              <span class="field-hint">Only used when the on-load checkbox is on. Clicks always run immediately.</span>
+            </label>
+            <label class="field is-hidden" id="sandbox-field">
+              <span class="field-label">Sandbox</span>
+              <select id="link-sandbox">
+                <option value="main">main — page JS (MAIN world)</option>
+                <option value="isolated">isolated — live DOM, no page globals</option>
+                <option value="readonly-dom">readonly-dom — isolated until clone exists</option>
+              </select>
+              <span class="field-hint">isolated and readonly-dom skip page CSP. readonly-dom still uses the live DOM (can write it).</span>
+            </label>
             <label class="field" id="link-code-field">
               <span class="field-label" id="link-code-label">Script</span>
               <textarea id="link-code" rows="5" spellcheck="false"></textarea>

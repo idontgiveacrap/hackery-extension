@@ -1,4 +1,10 @@
 const MAX_PATTERN_INPUT_LENGTH = 65536;
+/**
+ * Regex replacements run over whole response bodies, which are routinely far
+ * larger than a URL or header, so they get their own ceiling. Past it the find
+ * is skipped and the text is passed through untouched — never trimmed to fit.
+ */
+const MAX_REGEX_REPLACE_INPUT_LENGTH = 8 * 1024 * 1024;
 
 /**
  * Page JS cannot set these on fetch/XHR (Fetch "forbidden request headers").
@@ -105,11 +111,50 @@ function wildcardPatternToRegExp(pattern) {
 }
 
 /**
+ * Flags offered on a regex replacement. `y` is excluded: a sticky find anchors
+ * at lastIndex and would replace only a match sitting at the cursor. `d` only
+ * reports indices, which replacement never reads.
+ */
+const REGEX_REPLACEMENT_FLAGS = ["g", "i", "m", "s", "u"];
+const DEFAULT_REGEX_REPLACEMENT_FLAGS = "gi";
+/**
+ * Filter patterns are consumed by `test()`, where `g` only moves `lastIndex`
+ * and never changes the answer, so they default without it.
+ */
+const DEFAULT_FILTER_PATTERN_FLAGS = "i";
+
+/**
+ * Normalize user-entered regex flags to the supported set.
+ * Unknown or duplicate characters are dropped; empty input keeps the default
+ * so a replacement never silently becomes first-match-only.
+ * @param {string | null | undefined} flags Raw flag string.
+ * @param {string} [fallback] Flags to use when nothing valid is supplied.
+ * @returns {string} Flags in `REGEX_REPLACEMENT_FLAGS` order.
+ */
+function normalizeRegexFlags(flags, fallback = DEFAULT_REGEX_REPLACEMENT_FLAGS) {
+  if (flags == null) {
+    return fallback;
+  }
+  const requested = new Set(String(flags).toLowerCase().split(""));
+  const kept = REGEX_REPLACEMENT_FLAGS.filter((flag) => requested.has(flag));
+  return kept.length ? kept.join("") : fallback;
+}
+
+/**
  * Compile a pattern string into a RegExp, or null when the pattern is empty/absent.
  * Default mode is wildcard (`*`); pass isRegex true for RegExp syntax.
- * Returns { empty, invalid, regex }.
+ * Filter patterns compile case-insensitive and non-global — they are consumed
+ * by `test()`, where a global regex would advance `lastIndex` between calls.
+ * @param {string} pattern Pattern source.
+ * @param {boolean} [isRegex] Treat the source as RegExp syntax.
+ * @param {string} [flags] Explicit flags; defaults to case-insensitive.
+ * @returns {{ empty: boolean, invalid: boolean, regex: RegExp | null }}
  */
-function compilePatternString(pattern, isRegex = false) {
+function compilePatternString(
+  pattern,
+  isRegex = false,
+  flags = DEFAULT_FILTER_PATTERN_FLAGS
+) {
   if (!pattern) {
     return { empty: true, invalid: false, regex: null };
   }
@@ -119,7 +164,7 @@ function compilePatternString(pattern, isRegex = false) {
       empty: false,
       invalid: false,
       regex: isRegex
-        ? new RegExp(text, "i")
+        ? new RegExp(text, flags)
         : wildcardPatternToRegExp(text),
     };
   } catch {
@@ -128,45 +173,53 @@ function compilePatternString(pattern, isRegex = false) {
 }
 
 /**
+ * Compile one find/replace entry, carrying its normalized flags.
+ * @param {object} replacement Replacement entry.
+ * @returns {object} Entry with `compiledFind` for regex finds.
+ */
+function compileReplacement(replacement) {
+  if (!replacement?.isRegex) {
+    return { ...replacement, compiledFind: null };
+  }
+  const flags = normalizeRegexFlags(replacement.flags);
+  return {
+    ...replacement,
+    flags,
+    compiledFind: compilePatternString(replacement.find, true, flags),
+  };
+}
+
+/**
  * Precompile filter patterns and replacement find-regexes for one rule.
  */
 function compileRulePatterns(rule) {
   const mod = rule.modify || {};
+  const filterFlags = (key) =>
+    normalizeRegexFlags(rule[key], DEFAULT_FILTER_PATTERN_FLAGS);
   return {
     pageUrlPattern: compilePatternString(
       rule.pageUrlPattern,
-      rule.pageUrlPatternIsRegex
+      rule.pageUrlPatternIsRegex,
+      filterFlags("pageUrlPatternFlags")
     ),
     requestUrlPattern: compilePatternString(
       rule.requestUrlPattern,
-      rule.requestUrlPatternIsRegex
+      rule.requestUrlPatternIsRegex,
+      filterFlags("requestUrlPatternFlags")
     ),
     requestBodyPattern: compilePatternString(
       rule.requestBodyPattern,
-      rule.requestBodyPatternIsRegex
+      rule.requestBodyPatternIsRegex,
+      filterFlags("requestBodyPatternFlags")
     ),
     requestContentTypePattern: compilePatternString(
       rule.requestContentTypePattern,
-      rule.requestContentTypePatternIsRegex
+      rule.requestContentTypePatternIsRegex,
+      filterFlags("requestContentTypePatternFlags")
     ),
-    urlReplacements: (mod.urlReplacements || []).map((replacement) => ({
-      ...replacement,
-      compiledFind: replacement.isRegex
-        ? compilePatternString(replacement.find, true)
-        : null,
-    })),
-    bodyReplacements: (mod.bodyReplacements || []).map((replacement) => ({
-      ...replacement,
-      compiledFind: replacement.isRegex
-        ? compilePatternString(replacement.find, true)
-        : null,
-    })),
-    headerReplacements: (mod.headerReplacements || []).map((replacement) => ({
-      ...replacement,
-      compiledFind: replacement.isRegex
-        ? compilePatternString(replacement.find, true)
-        : null,
-    })),
+    urlReplacements: (mod.urlReplacements || []).map(compileReplacement),
+    bodyReplacements: (mod.bodyReplacements || []).map(compileReplacement),
+    headerReplacements: (mod.headerReplacements || []).map(compileReplacement),
   };
 }
 
@@ -198,6 +251,10 @@ function testCompiledPattern(value, compiled) {
   if (input.length > MAX_PATTERN_INPUT_LENGTH) {
     return false;
   }
+  // Filter patterns compile without `g`, but a rule imported with global flags
+  // would otherwise carry lastIndex from the previous test and match every
+  // other call.
+  compiled.regex.lastIndex = 0;
   return compiled.regex.test(input);
 }
 
@@ -205,11 +262,16 @@ function createNetworkRuleEngine(options = {}) {
   const {
     resolveBaseUrl = (ctx) => ctx.pageUrl || "https://example.invalid/",
     afterRuleScript = () => {},
+    onOversizedReplacement = (find, length) => {
+      console.warn(
+        `Network rule regex skipped on ${length} chars (over ${MAX_REGEX_REPLACE_INPUT_LENGTH}): ${String(find).slice(0, 120)}`
+      );
+    },
   } = options;
 
   const NETWORK_PHASES = ["request", "response"];
 
-  function matchesNetworkPattern(value, pattern, compiledPattern, isRegex) {
+  function matchesNetworkPattern(value, pattern, compiledPattern, isRegex, flags) {
     if (compiledPattern) {
       return testCompiledPattern(value, compiledPattern);
     }
@@ -218,7 +280,11 @@ function createNetworkRuleEngine(options = {}) {
     }
     return testCompiledPattern(
       value,
-      compilePatternString(pattern, isRegex)
+      compilePatternString(
+        pattern,
+        isRegex,
+        normalizeRegexFlags(flags, DEFAULT_FILTER_PATTERN_FLAGS)
+      )
     );
   }
 
@@ -340,7 +406,8 @@ function createNetworkRuleEngine(options = {}) {
         pageUrl,
         rule.pageUrlPattern,
         compiled?.pageUrlPattern,
-        rule.pageUrlPatternIsRegex
+        rule.pageUrlPatternIsRegex,
+        rule.pageUrlPatternFlags
       )
     ) {
       return false;
@@ -350,7 +417,8 @@ function createNetworkRuleEngine(options = {}) {
         requestUrl.href,
         rule.requestUrlPattern,
         compiled?.requestUrlPattern,
-        rule.requestUrlPatternIsRegex
+        rule.requestUrlPatternIsRegex,
+        rule.requestUrlPatternFlags
       )
     ) {
       return false;
@@ -362,7 +430,8 @@ function createNetworkRuleEngine(options = {}) {
           String(ctx.body ?? ""),
           rule.requestBodyPattern,
           compiled?.requestBodyPattern,
-          rule.requestBodyPatternIsRegex
+          rule.requestBodyPatternIsRegex,
+          rule.requestBodyPatternFlags
         )
       ) {
         return false;
@@ -381,7 +450,8 @@ function createNetworkRuleEngine(options = {}) {
           getHeaderValue(ctx.headers, "Content-Type"),
           rule.requestContentTypePattern,
           compiled?.requestContentTypePattern,
-          rule.requestContentTypePatternIsRegex
+          rule.requestContentTypePatternIsRegex,
+          rule.requestContentTypePatternFlags
         )
       ) {
         return false;
@@ -406,12 +476,26 @@ function createNetworkRuleEngine(options = {}) {
     return true;
   }
 
+  /**
+   * Apply find/replace entries to a string.
+   *
+   * The input is never truncated: this rewrites response bodies, so dropping
+   * the tail would corrupt the document rather than just miss a match. Literal
+   * finds run at any size. A regex find is skipped past
+   * MAX_REGEX_REPLACE_INPUT_LENGTH, where backtracking cost stops being
+   * predictable, and the skip is reported instead of silently applying.
+   *
+   * @param {string | null | undefined} value Text to rewrite.
+   * @param {object[]} replacements Find/replace entries.
+   * @param {object[]} [compiledReplacements] Precompiled finds, same order.
+   * @returns {string | null | undefined} Rewritten text, or value when unchanged.
+   */
   function applyStringReplacements(value, replacements, compiledReplacements) {
     if (value == null || !replacements?.length) {
       return value;
     }
 
-    let result = String(value).slice(0, MAX_PATTERN_INPUT_LENGTH);
+    let result = String(value);
     for (let index = 0; index < replacements.length; index += 1) {
       const replacement = replacements[index];
       const compiledReplacement = compiledReplacements?.[index];
@@ -421,8 +505,13 @@ function createNetworkRuleEngine(options = {}) {
         continue;
       }
       if (replacement.isRegex) {
+        if (result.length > MAX_REGEX_REPLACE_INPUT_LENGTH) {
+          onOversizedReplacement(find, result.length);
+          continue;
+        }
         const compiledFind =
-          compiledReplacement?.compiledFind || compilePatternString(find, true);
+          compiledReplacement?.compiledFind ||
+          compilePatternString(find, true, normalizeRegexFlags(replacement.flags));
         if (compiledFind.invalid || !compiledFind.regex) {
           continue;
         }
@@ -634,6 +723,10 @@ export {
   compileRulePatterns as compileNetworkRulePatterns,
   compileRulesCache as compileNetworkRulesCache,
   attachCompiledPatterns as attachCompiledNetworkRules,
+  normalizeRegexFlags,
+  DEFAULT_FILTER_PATTERN_FLAGS,
+  DEFAULT_REGEX_REPLACEMENT_FLAGS,
+  REGEX_REPLACEMENT_FLAGS,
   PRIVILEGED_REQUEST_HEADER_PREFIX,
   PRIVILEGED_REQUEST_HEADER_NAMES,
   isPrivilegedRequestHeaderName,
