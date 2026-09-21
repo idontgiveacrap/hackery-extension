@@ -10,7 +10,9 @@
   outline: none;
 }
 
-.cm-field .cm-editor.cm-focused {
+/* The border lives on the wrapper, so the focus ring has to as well — setting
+   it on .cm-editor drew nothing, since that element has no border. */
+.cm-field:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }

@@ -2,18 +2,26 @@ import {
   attachCompiledNetworkRules,
   compileNetworkRulesCache,
   createNetworkRuleEngine,
+  DEFAULT_FILTER_PATTERN_FLAGS,
+  DEFAULT_REGEX_REPLACEMENT_FLAGS,
   encodePrivilegedRequestHeaders,
   isPrivilegedRequestHeaderName,
+  normalizeRegexFlags,
   PRIVILEGED_REQUEST_HEADER_NAMES,
   PRIVILEGED_REQUEST_HEADER_PREFIX,
+  REGEX_REPLACEMENT_FLAGS,
   rewritePrivilegedRequestHeaders,
 } from "./network-rule-engine-core.js";
 
 export {
+  DEFAULT_FILTER_PATTERN_FLAGS,
+  DEFAULT_REGEX_REPLACEMENT_FLAGS,
   encodePrivilegedRequestHeaders,
   isPrivilegedRequestHeaderName,
+  normalizeRegexFlags,
   PRIVILEGED_REQUEST_HEADER_NAMES,
   PRIVILEGED_REQUEST_HEADER_PREFIX,
+  REGEX_REPLACEMENT_FLAGS,
   rewritePrivilegedRequestHeaders,
 };
 export const NETWORK_MAIN_HOOK_SCRIPT_ID = "hackery-lab-network-hook-main";

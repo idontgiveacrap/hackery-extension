@@ -294,7 +294,7 @@ Firefox MV3 **merges** any in-place CSP rewrite from `webRequest`, so [lib/csp-n
 
 The 10-minute `alarms` countdown starts only when at least one rule is **enabled**. Empty list = armed/waiting, label reads `Ready`, no countdown, extend half disabled. Disabling the last enabled rule cancels the alarm and stays ready. Expiry or the disable half turns hooks off; nonce-origin DNR stays if that origin’s checkbox is on.
 
-Nuclear disable is the **Disable CSP** network-rule template (empty policy / omit header), so it is timer-gated. Isolation headers are not stripped unless a rule says so.
+Nuclear disable is the **Disable CSP** network-rule template (empty policy / omit header), so it is timer-gated. It also carries a `gi` regex **body replacement** that removes every `<meta http-equiv="Content-Security-Policy">` tag, including tags after `</head>` that the streaming head rewrite never sees; that puts matching documents on the buffering path, so they paint later. Isolation headers are not stripped unless a rule says so.
 
 **Do not touch CSP** when the origin nonce toggle is off and no armed CSP-touching rule matches. Regex / undigestible patterns fail closed (no DNR strip).
 
@@ -473,7 +473,15 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 
 **Rule visibility:** recent matches log to session storage (FIFO cap of 100); toolbar badge `●` on tabs where a rule fired; rules UI highlights the last matched rule. Log entries include `tabId` when known.
 
+**CSP rules log from compose.** `matchingSkippingCspHeaderEdits` removes CSP header edits before the header-rule pass, so a CSP-touching rule changes no header there and `applyHeaderRules` never logs it — it looked like the rule matched nothing even while it was disabling CSP on every document. `onHeadersReceived` therefore logs each matching CSP rule once the compose outcome is known, as `csp-disabled` (header omitted) or `csp-composed`.
+
 **Pattern compilation:** filter regexes compile once on rules refresh in the background and once per hook install in the page. Rule refresh is debounced (300ms).
+
+**Regex flags:** every regex-capable field carries its own flags — replacements in `flags`, filters in `<patternKey>Flags` (e.g. `pageUrlPatternFlags`). Selectable set is `g i m s u` (`REGEX_REPLACEMENT_FLAGS`); `y` is excluded because a sticky find anchors at `lastIndex`, and `d` only reports indices. Replacements default to `gi`, so a regex find replaces **every** match unless the user drops `g`. Filters default to `i` (`DEFAULT_FILTER_PATTERN_FLAGS`): they are read by `test()`, where `g` only moves `lastIndex`. `testCompiledPattern` resets `lastIndex` first, so a pattern saved or imported with `g` cannot match every other call. The UI control is `network/ui/regex-flags-select.js`, a checkbox combobox shown on every regex field and hidden while that field is in wildcard mode.
+
+**One field look.** Replacement **Find** inputs get the same compact CodeMirror treatment as the filter patterns (`regex` language + lint when the regex box is ticked, `plain` otherwise), attached per row after the row is in the DOM and destroyed when the row is removed. Every remaining single-line control in the rule form matches a compact `.cm-field` box — `4px 8px` padding, 12px/1.4 monospace, shared border/radius and focus ring — so plain inputs no longer read as a different widget next to an editor. The focus ring lives on `.cm-field:focus-within`, since the wrapper owns the border.
+
+**Replacements never truncate.** `applyStringReplacements` rewrites whole response bodies, so it returns the full string; trimming to fit would corrupt the document rather than miss a match. Literal finds run at any size. A regex find is skipped above `MAX_REGEX_REPLACE_INPUT_LENGTH` (8 MB) and reported through the engine's `onOversizedReplacement` (default `console.warn`), leaving the text untouched. `MAX_PATTERN_INPUT_LENGTH` (64 KB) still bounds filter **matching** only.
 
 **Scripts vs webRequest:** request/response scripts run in the page hook (fetch/XHR). webRequest applies declarative block/redirect/header/body actions only — Firefox MV3 CSP blocks `new Function()` in extension pages. A CSP-safe interpreter can be wired later in `network-webrequest.js`.
 

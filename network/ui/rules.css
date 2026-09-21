@@ -412,17 +412,36 @@ button.panel-tab[aria-selected="true"]::after {
   letter-spacing: 0;
 }
 
+/* One box for every single-line control in the rule form, matching the
+   compact CodeMirror fields (4px 8px padding, 12px/1.4 monospace) so a plain
+   input sits at the same height and weight as a pattern editor beside it. */
 .field input[type="text"],
 .field input[type="number"],
 .field select,
-.field textarea:not([aria-hidden="true"]) {
+.field textarea:not([aria-hidden="true"]),
+.replacement-row input[type="text"],
+.set-header-row input[type="text"],
+.regex-flags-toggle {
   width: 100%;
-  padding: 7px 8px;
+  padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
   color: inherit;
-  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.field input[type="text"]:focus,
+.field input[type="number"]:focus,
+.field select:focus,
+.field textarea:not([aria-hidden="true"]):focus,
+.replacement-row input[type="text"]:focus,
+.set-header-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .field textarea:not([aria-hidden="true"]) {
@@ -494,7 +513,7 @@ button.panel-tab[aria-selected="true"]::after {
 .replacement-row,
 .set-header-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto auto;
   gap: 6px;
   align-items: center;
 }
@@ -504,17 +523,64 @@ button.panel-tab[aria-selected="true"]::after {
 }
 
 .replacement-row.header-row {
-  grid-template-columns: 100px minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: 100px minmax(0, 1fr) minmax(0, 1fr) auto auto auto;
 }
 
-.replacement-row input[type="text"] {
-  width: 100%;
-  padding: 6px 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.regex-flags {
+  position: relative;
+  display: inline-flex;
+}
+
+.regex-flags[hidden] {
+  display: none;
+}
+
+.regex-flags-toggle {
+  width: auto;
+  min-width: 5ch;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+  text-align: center;
+  cursor: pointer;
+}
+
+.regex-flags-toggle:hover {
   background: var(--bg);
-  color: inherit;
-  font: inherit;
+  border-color: var(--accent);
+}
+
+.regex-flags-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  min-width: 220px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 35%);
+  white-space: nowrap;
+}
+
+.regex-flags-menu[hidden] {
+  display: none;
+}
+
+.regex-flags-menu .inline-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.field-label-row .regex-flags {
+  flex-shrink: 0;
 }
 
 .form-actions {
