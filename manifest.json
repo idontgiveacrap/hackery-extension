@@ -1,0 +1,107 @@
+{
+  "manifest_version": 3,
+  "name": "Hackery Lab",
+  "version": "1.1.0",
+  "description": "Links, scriptlets, and network rules.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "punk@local.dev",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "clipboardWrite",
+    "contextMenus",
+    "declarativeNetRequestWithHostAccess",
+    "downloads",
+    "scripting",
+    "storage",
+    "tabs",
+    "webNavigation",
+    "webRequest",
+    "webRequestBlocking",
+    "webRequestFilterResponse"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "devtools_page": "devtools/devtools.html",
+  "action": {
+    "default_title": "Hackery Lab",
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png"
+    }
+  },
+  "sidebar_action": {
+    "default_title": "Hackery Lab",
+    "default_panel": "sidebar/sidebar.html",
+    "default_icon": {
+      "16": "icon.png",
+      "32": "icon.png",
+      "48": "icon.png"
+    },
+    "open_at_install": false
+  },
+  "omnibox": {
+    "keyword": "hl"
+  },
+  "commands": {
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Ctrl+Period",
+        "mac": "MacCtrl+Period"
+      },
+      "description": "Toggle Hackery Lab sidebar"
+    },
+    "run_link_1": {
+      "suggested_key": { "default": "Alt+1" },
+      "description": "Run assigned link slot 1"
+    },
+    "run_link_2": {
+      "suggested_key": { "default": "Alt+2" },
+      "description": "Run assigned link slot 2"
+    },
+    "run_link_3": {
+      "suggested_key": { "default": "Alt+3" },
+      "description": "Run assigned link slot 3"
+    },
+    "run_link_4": {
+      "suggested_key": { "default": "Alt+4" },
+      "description": "Run assigned link slot 4"
+    },
+    "run_link_5": {
+      "suggested_key": { "default": "Alt+5" },
+      "description": "Run assigned link slot 5"
+    },
+    "run_link_6": {
+      "suggested_key": { "default": "Alt+6" },
+      "description": "Run assigned link slot 6"
+    },
+    "run_link_7": {
+      "suggested_key": { "default": "Alt+7" },
+      "description": "Run assigned link slot 7"
+    },
+    "run_link_8": {
+      "suggested_key": { "default": "Alt+8" },
+      "description": "Run assigned link slot 8"
+    },
+    "run_link_9": {
+      "suggested_key": { "default": "Alt+9" },
+      "description": "Run assigned link slot 9"
+    },
+    "run_link_0": {
+      "suggested_key": { "default": "Alt+0" },
+      "description": "Run assigned link slot 0"
+    }
+  },
+  "icons": {
+    "48": "icon.png",
+    "96": "icon.png"
+  }
+}

@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Network Rules</title>
+    <link rel="stylesheet" href="../../lib/ui-theme.css" />
+    <link rel="stylesheet" href="../../lib/ui-message.css" />
+    <link rel="stylesheet" href="../../lib/network-arm-control.css" />
+    <link rel="stylesheet" href="rules.css" />
+    <link rel="stylesheet" href="../../lib/codemirror-fields.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>
+        Network rules
+        <span
+          id="network-status-dot"
+          class="network-status-dot"
+          role="img"
+          tabindex="0"
+          aria-label="Network hooks status"
+        >
+          <span
+            id="network-status-tooltip"
+            class="network-status-tooltip"
+            role="tooltip"
+          >Network hooks status</span>
+        </span>
+      </h1>
+      <p class="page-header-desc">
+        fetch/XHR + webRequest; re-injects on save. Arm here or in the sidebar — the countdown starts once a rule is enabled.
+      </p>
+      <div class="page-header-actions">
+        <div id="network-arm"></div>
+        <select id="rule-template-select" class="template-select" title="Insert a preset rule from network/data/network-rule-templates.json">
+          <option value="">Insert from template…</option>
+        </select>
+        <button id="add-rule-btn" type="button">Add rule</button>
+        <button id="export-rules-btn" type="button" class="secondary">Export</button>
+        <button id="import-rules-btn" type="button" class="secondary">Import</button>
+        <input
+          id="import-rules-file"
+          type="file"
+          accept=".json,application/json"
+          hidden
+        />
+        <button id="reinject-btn" type="button" class="secondary">Re-inject</button>
+      </div>
+    </header>
+
+    <div id="message" class="message hidden" role="status"></div>
+
+    <main class="layout">
+      <section class="panel rules-panel" aria-label="Rules">
+        <div class="panel-header">
+          <h2>Rules</h2>
+          <span id="rule-count" class="panel-meta"></span>
+        </div>
+        <div id="rules-list" class="rules-list"></div>
+      </section>
+
+      <section class="panel workspace-panel" aria-label="Rule workspace">
+        <div class="panel-header workspace-header">
+          <div class="panel-tabs" role="tablist" aria-label="Rule workspace views">
+            <button
+              id="editor-tab"
+              class="panel-tab"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="editor-panel"
+            >
+              Rule editor
+            </button>
+            <button
+              id="log-tab"
+              class="panel-tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="log-panel"
+              tabindex="-1"
+            >
+              Recent matches
+              <span id="recent-match-count" class="tab-count" hidden></span>
+            </button>
+          </div>
+          <span id="editor-title" class="panel-meta">No rule selected</span>
+          <div id="log-toolbar" class="log-toolbar" hidden>
+            <input
+              id="log-search"
+              class="log-search"
+              type="search"
+              placeholder="Search matches…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="clear-log-btn" type="button" class="secondary small">
+              Clear
+            </button>
+          </div>
+        </div>
+        <div
+          id="editor-panel"
+          class="editor-panel"
+          role="tabpanel"
+          aria-labelledby="editor-tab"
+        >
+        <form id="rule-form" class="rule-form hidden">
+          <div class="form-grid">
+            <label class="field">
+              <span class="field-label">Name</span>
+              <input id="rule-name" type="text" required autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">Priority</span>
+              <input
+                id="rule-priority"
+                type="number"
+                min="0"
+                step="1"
+                value="100"
+              />
+            </label>
+            <label class="field field-check">
+              <input id="rule-enabled" type="checkbox" checked />
+              <span>Rule enabled</span>
+            </label>
+          </div>
+
+          <fieldset class="fieldset">
+            <legend>Filters</legend>
+            <p class="fieldset-hint">
+              Empty pattern matches anything. Patterns use <code>*</code>
+              wildcards by default; check <strong>regex</strong> for RegExp
+              syntax. All set filters must match. Page URL is the top-level tab
+              URL (not the iframe URL). Recent matches records every filter
+              match; scripts run afterward and do not participate in matching.
+            </p>
+            <div class="field">
+              <div class="field-label-row">
+                <span class="field-label">Page URL</span>
+                <label class="inline-check">
+                  <input id="rule-page-url-pattern-regex" type="checkbox" />
+                  <span>regex</span>
+                </label>
+              </div>
+              <input
+                id="rule-page-url-pattern"
+                type="text"
+                placeholder="*/app/*"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field">
+              <div class="field-label-row">
+                <span class="field-label">Request URL</span>
+                <label class="inline-check">
+                  <input id="rule-request-url-pattern-regex" type="checkbox" />
+                  <span>regex</span>
+                </label>
+              </div>
+              <input
+                id="rule-request-url-pattern"
+                type="text"
+                placeholder="*/api/v1/items/*"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field" data-show="request-phase page-hook">
+              <div class="field-label-row">
+                <span class="field-label">Request body</span>
+                <label class="inline-check">
+                  <input id="rule-body-pattern-regex" type="checkbox" />
+                  <span>regex</span>
+                </label>
+              </div>
+              <input
+                id="rule-body-pattern"
+                type="text"
+                placeholder="*q=*status=open*"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field" data-show="request-phase">
+              <div class="field-label-row">
+                <span class="field-label">Request Content-Type</span>
+                <label class="inline-check">
+                  <input id="rule-content-type-pattern-regex" type="checkbox" />
+                  <span>regex</span>
+                </label>
+              </div>
+              <input
+                id="rule-content-type-pattern"
+                type="text"
+                placeholder="application/json*"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field">
+              <span class="field-label">HTTP methods</span>
+              <div id="rule-methods" class="method-grid"></div>
+            </div>
+            <div class="field">
+              <span class="field-label">Resource types</span>
+              <p class="field-inline-hint">
+                Empty = all types. fetch API is handled in-page and matches the
+                XHR type filter.
+              </p>
+              <div id="rule-resource-types" class="resource-grid"></div>
+            </div>
+            <div class="field">
+              <span class="field-label">Phases</span>
+              <div class="phase-row">
+                <label class="inline-check">
+                  <input id="phase-request" type="checkbox" checked />
+                  <span>Request</span>
+                </label>
+                <label class="inline-check">
+                  <input id="phase-response" type="checkbox" />
+                  <span>Response</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-grid" data-show="response-phase">
+              <label class="field">
+                <span class="field-label">Response status min</span>
+                <input
+                  id="rule-status-min"
+                  type="number"
+                  min="0"
+                  placeholder="Any"
+                />
+              </label>
+              <label class="field">
+                <span class="field-label">Response status max</span>
+                <input
+                  id="rule-status-max"
+                  type="number"
+                  min="0"
+                  placeholder="Any"
+                />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend>Action</legend>
+            <label class="field">
+              <span class="field-label">Action type</span>
+              <select id="rule-action">
+                <option value="modify">Modify</option>
+                <option value="mock">Mock (no network)</option>
+                <option value="block">Block</option>
+                <option value="redirect">Redirect</option>
+              </select>
+            </label>
+            <label class="field field-check" data-show="serve-without-toggle">
+              <input id="rule-serve-without-request" type="checkbox" />
+              <span>Serve without request (modify only)</span>
+            </label>
+            <div class="form-grid" data-show="mock-fields">
+              <label class="field">
+                <span class="field-label">Mock status</span>
+                <input
+                  id="rule-mock-status"
+                  type="number"
+                  min="0"
+                  value="200"
+                />
+              </label>
+              <label class="field">
+                <span class="field-label">Mock status text</span>
+                <input
+                  id="rule-mock-status-text"
+                  type="text"
+                  value="OK"
+                  spellcheck="false"
+                />
+              </label>
+            </div>
+            <label class="field" data-show="mock-fields">
+              <span class="field-label">Mock body</span>
+              <textarea
+                id="rule-mock-body"
+                rows="4"
+                placeholder='{"result":[]}'
+                spellcheck="false"
+              ></textarea>
+            </label>
+            <label class="field" data-show="redirect">
+              <span class="field-label">Redirect URL</span>
+              <input
+                id="rule-redirect-url"
+                type="text"
+                placeholder="https://example.com/new-path"
+                spellcheck="false"
+              />
+            </label>
+          </fieldset>
+
+          <fieldset class="fieldset" data-show="modify">
+            <legend>Modify</legend>
+            <div class="replacement-block" data-show="modify request-phase">
+              <div class="replacement-header">
+                <span>URL replacements</span>
+                <button
+                  type="button"
+                  class="secondary small"
+                  data-add-replacement="urlReplacements"
+                >
+                  Add
+                </button>
+              </div>
+              <div id="url-replacements" class="replacement-list"></div>
+            </div>
+            <div class="replacement-block" data-show="modify">
+              <div class="replacement-header">
+                <span>Body replacements</span>
+                <button
+                  type="button"
+                  class="secondary small"
+                  data-add-replacement="bodyReplacements"
+                >
+                  Add
+                </button>
+              </div>
+              <div id="body-replacements" class="replacement-list"></div>
+            </div>
+            <div class="replacement-block" data-show="modify">
+              <div class="replacement-header">
+                <span>Header replacements</span>
+                <button
+                  type="button"
+                  class="secondary small"
+                  data-add-replacement="headerReplacements"
+                >
+                  Add
+                </button>
+              </div>
+              <div id="header-replacements" class="replacement-list"></div>
+            </div>
+            <div class="replacement-block" data-show="modify">
+              <div class="replacement-header">
+                <span>Set headers</span>
+                <button
+                  type="button"
+                  class="secondary small"
+                  data-add-set-header
+                >
+                  Add
+                </button>
+              </div>
+              <div id="set-headers" class="replacement-list"></div>
+            </div>
+            <label class="field" data-show="modify request-phase page-hook">
+              <span class="field-label">Request script</span>
+              <textarea
+                id="rule-request-script"
+                rows="5"
+                placeholder="function(ctx, rule) { console.log(ctx.url, ctx.body); return ctx; }"
+                spellcheck="false"
+              ></textarea>
+            </label>
+            <label class="field" data-show="modify response-phase page-hook">
+              <span class="field-label">Response script</span>
+              <textarea
+                id="rule-response-script"
+                rows="5"
+                placeholder="function(ctx, rule) { return ctx; }"
+                spellcheck="false"
+              ></textarea>
+            </label>
+            <p class="fieldset-hint" data-show="scripts-hint">
+              Scripts run in the page hook for fetch/XHR only. webRequest keeps
+              declarative block/redirect/header/body actions (Firefox MV3 CSP
+              blocks <code>new Function()</code> in extension pages). Script
+              receives <code>ctx</code> with <code>phase</code>,
+              <code>method</code>, <code>url</code>, <code>pageUrl</code>,
+              <code>headers</code>, <code>body</code>, <code>status</code>,
+              plus <code>ctx.sharedState</code> (persisted across navigations)
+              and <code>ctx.tabState</code> (per tab). Set
+              <code>ctx.logDetail</code> to surface text in Recent matches.
+              Request scripts also receive
+              <code>decodeBasicAuth(ctx)</code>, which returns decoded Basic
+              credentials from headers or URL userinfo. Return modified
+              <code>ctx</code> to apply script changes, <code>null</code> to
+              block, or nothing to leave wire fields unchanged (regex
+              replacements still apply). Unchanged requests pass through as-is.
+            </p>
+          </fieldset>
+
+          <fieldset class="fieldset" data-show="hook-behavior">
+            <legend>Hook behavior</legend>
+            <p class="fieldset-hint">
+              When a rule script triggers fetch/XHR, other rules are skipped unless
+              they opt in below. A rule never matches its own traffic while running.
+            </p>
+            <label class="field field-check">
+              <input id="rule-match-hook-originated" type="checkbox" />
+              <span>Match hook-originated requests</span>
+            </label>
+          </fieldset>
+
+          <fieldset class="fieldset">
+            <legend>Test rule</legend>
+            <p class="fieldset-hint">
+              Opens the URL in a new tab and shows a toast when this rule matches.
+            </p>
+            <div class="form-grid test-rule-row">
+              <label class="field">
+                <span class="field-label">Test URL</span>
+                <input
+                  id="rule-test-url"
+                  type="url"
+                  placeholder="https://example.com/"
+                  spellcheck="false"
+                />
+              </label>
+              <div class="field field-action">
+                <span class="field-label">&nbsp;</span>
+                <button id="test-rule-btn" type="button" class="secondary">
+                  Test
+                </button>
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset class="fieldset" data-show="untested-intent">
+            <legend>Untested intent</legend>
+            <p class="fieldset-hint intent-note">
+              Header forwarding on redirect (e.g. preserving
+              <code>Authorization</code> when a page-hook redirect changes the
+              XHR URL) is not implemented. Fetch/XHR header mods for
+              <code>Cookie</code>, <code>Origin</code>, and
+              <code>Referer</code> use a dummy
+              <code>x-hackerylab-*</code> prefix in the page hook; webRequest
+              rewrites them to the real names before the request is sent.
+              Other resource types get header rules directly via webRequest.
+            </p>
+          </fieldset>
+
+          <div class="form-actions">
+            <button id="save-rule-btn" type="submit">Save rule</button>
+            <button
+              id="delete-rule-btn"
+              type="button"
+              class="danger secondary"
+              disabled
+            >
+              Delete
+            </button>
+          </div>
+        </form>
+        </div>
+
+        <div
+          id="log-panel"
+          class="log-panel"
+          role="tabpanel"
+          aria-labelledby="log-tab"
+          hidden
+        >
+        <div id="rules-log" class="rules-log"></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="rules.js"></script>
+  </body>
+</html>

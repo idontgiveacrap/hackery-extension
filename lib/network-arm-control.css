@@ -1,0 +1,91 @@
+/* Arm control: see lib/network-arm-control.js. The armed view keeps the exact
+   shape of the disarmed button so the widget does not resize mid-countdown.
+   Selectors are doubled up (.arm-control .x) because host stylesheets style
+   bare `button`, and the DevTools panel styles `.page-header button`. */
+
+.arm-control {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.arm-control .arm-control-button,
+.arm-control .arm-control-live {
+  box-sizing: border-box;
+  min-width: 7em;
+  height: 22px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.arm-control .arm-control-button {
+  padding: 0 8px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.arm-control .arm-control-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.arm-control .arm-control-live {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+}
+
+.arm-control .arm-control-live[hidden] {
+  display: none;
+}
+
+.arm-control .arm-control-half {
+  box-sizing: border-box;
+  flex: 1 1 50%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.arm-control .arm-control-extend {
+  background: #1f7a3d;
+}
+
+.arm-control .arm-control-extend:hover:not(:disabled) {
+  background: #2ea04a;
+}
+
+.arm-control .arm-control-disarm {
+  background: #96281b;
+}
+
+.arm-control .arm-control-disarm:hover {
+  background: #c0392b;
+}
+
+.arm-control .arm-control-half:disabled {
+  cursor: default;
+  background: #4c5a51;
+}
+
+/* Spans both halves: one label, two click targets. */
+.arm-control .arm-control-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+}
