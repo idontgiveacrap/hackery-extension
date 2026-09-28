@@ -69,6 +69,7 @@ async function resolveCopyText(node, row) {
     // exactly when Run does.
     const outcome = await executeScriptletWithBindings(tab.id, node.code, paramValues, {
       frames: node.frames,
+      sandbox: node.sandbox,
     });
     const urls = [];
     for (const item of outcome.successes) {

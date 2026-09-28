@@ -8,6 +8,8 @@ import {
   populateExcludePattern,
   readRunAt,
   populateRunAt,
+  readSandbox,
+  populateSandbox,
   readFramesFields,
   populateFramesFields,
   clearFramesFields,
@@ -197,6 +199,9 @@ export function buildLinkNodeFromForm(form) {
     if (type === "scriptlet" && form.runAt) {
       draft.runAt = form.runAt;
     }
+    if (form.sandbox) {
+      draft.sandbox = form.sandbox;
+    }
   } else if (type === "navigate") {
     const url = form.url.trim() || form.path.trim();
     if (!url) {
@@ -288,6 +293,7 @@ export function readBuilderForm(elements) {
   const match = readHostPattern(elements.fieldElements);
   const exclude = readExcludePattern(elements.fieldElements);
   const runAt = readRunAt(elements.fieldElements);
+  const sandbox = readSandbox(elements.fieldElements);
   const frames = readFramesFields(elements.fieldElements);
 
   return {
@@ -299,6 +305,7 @@ export function readBuilderForm(elements) {
     match,
     exclude,
     runAt,
+    sandbox,
     frames,
     searchTags: elements.searchTagsInput.value,
     code: getFieldValue(elements.codeInput),
@@ -322,6 +329,7 @@ export function populateBuilderForm(elements, node, sectionName, sectionNames) {
   populateHostPattern(elements.fieldElements, normalized.match);
   populateExcludePattern(elements.fieldElements, normalized.exclude);
   populateRunAt(elements.fieldElements, normalized.runAt);
+  populateSandbox(elements.fieldElements, normalized.sandbox);
   populateFramesFields(elements.fieldElements, normalized.frames);
   elements.searchTagsInput.value = Array.isArray(normalized.searchTags)
     ? normalized.searchTags.join(", ")
@@ -350,6 +358,7 @@ export function clearBuilderForm(elements, sectionNames, defaultSection) {
   populateHostPattern(elements.fieldElements, undefined);
   populateExcludePattern(elements.fieldElements, undefined);
   populateRunAt(elements.fieldElements, undefined);
+  populateSandbox(elements.fieldElements, undefined);
   clearFramesFields(elements.fieldElements);
   elements.searchTagsInput.value = "";
   setFieldValue(elements.codeInput, "");
@@ -452,6 +461,7 @@ export function updateBuilderFieldVisibility(elements) {
   setFieldVisible(elements.fieldElements.parametersSection, isScriptlet);
   setFieldVisible(elements.fieldElements.framesSection, isScriptlet);
   setFieldVisible(elements.fieldElements.runAtField, isRunScriptlet);
+  setFieldVisible(elements.fieldElements.sandboxField, isScriptlet);
   setFieldVisible(elements.fieldElements.navParamsSection, isUrlType);
 
   if (elements.typeHint) {

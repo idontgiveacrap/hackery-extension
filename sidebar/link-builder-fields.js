@@ -494,6 +494,21 @@ export function populateRunAt(fieldElements, runAt) {
   fieldElements.runAtSelect.value = runAt || "document_start";
 }
 
+export function readSandbox(fieldElements) {
+  const value = fieldElements.sandboxSelect?.value;
+  if (!value || value === "main") {
+    return undefined;
+  }
+  return value;
+}
+
+export function populateSandbox(fieldElements, sandbox) {
+  if (!fieldElements.sandboxSelect) {
+    return;
+  }
+  fieldElements.sandboxSelect.value = sandbox || "main";
+}
+
 export function readParameterFields(fieldElements) {
   const mode = fieldElements.parameterModeSelect.value;
   if (mode === "single") {
@@ -576,6 +591,8 @@ export function getBuilderFieldElements(root = document) {
     excludePatternCustomField: root.getElementById("exclude-pattern-custom-field"),
     runAtField: root.getElementById("run-at-field"),
     runAtSelect: root.getElementById("link-run-at"),
+    sandboxField: root.getElementById("sandbox-field"),
+    sandboxSelect: root.getElementById("link-sandbox"),
     framesSection: root.getElementById("frames-section"),
     framesModeSelect: root.getElementById("frames-mode"),
     framesCustomFields: root.getElementById("frames-custom-fields"),

@@ -5,6 +5,7 @@
     <title>Hackery Lab</title>
     <link rel="stylesheet" href="../lib/ui-theme.css" />
     <link rel="stylesheet" href="../lib/ui-message.css" />
+    <link rel="stylesheet" href="../lib/network-arm-control.css" />
     <link rel="stylesheet" href="sidebar.css" />
   </head>
   <body class="sidebar">
@@ -20,22 +21,11 @@
             <input id="inject-on-load-enabled" type="checkbox" checked />
             On load
           </label>
-          <label
-            id="network-hooks-enabled-label"
-            class="header-toggle"
-            title="When off, network rules and fetch/XHR hooks do not run. Edit rules in DevTools → Network Rules."
-          >
-            <input id="network-hooks-enabled" type="checkbox" checked />
-            Network
+          <label id="csp-nonce-label" class="header-toggle">
+            <input id="csp-nonce-checkbox" type="checkbox" />
+            Allow scriptlets (CSP)
           </label>
-          <label
-            id="csp-disable-label"
-            class="csp-disable-label"
-            title="Strip CSP and cross-origin isolation headers, plus meta CSP tags, for this tab on hard reload"
-          >
-            <input id="csp-disable-checkbox" type="checkbox" />
-            Disable CSP
-          </label>
+          <div id="network-arm"></div>
         </div>
       </div>
       <p id="active-tab-status" class="active-tab-status"></p>

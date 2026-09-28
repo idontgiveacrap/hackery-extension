@@ -2,18 +2,26 @@ import {
   attachCompiledNetworkRules,
   compileNetworkRulesCache,
   createNetworkRuleEngine,
+  DEFAULT_FILTER_PATTERN_FLAGS,
+  DEFAULT_REGEX_REPLACEMENT_FLAGS,
   encodePrivilegedRequestHeaders,
   isPrivilegedRequestHeaderName,
+  normalizeRegexFlags,
   PRIVILEGED_REQUEST_HEADER_NAMES,
   PRIVILEGED_REQUEST_HEADER_PREFIX,
+  REGEX_REPLACEMENT_FLAGS,
   rewritePrivilegedRequestHeaders,
 } from "./network-rule-engine-core.js";
 
 export {
+  DEFAULT_FILTER_PATTERN_FLAGS,
+  DEFAULT_REGEX_REPLACEMENT_FLAGS,
   encodePrivilegedRequestHeaders,
   isPrivilegedRequestHeaderName,
+  normalizeRegexFlags,
   PRIVILEGED_REQUEST_HEADER_NAMES,
   PRIVILEGED_REQUEST_HEADER_PREFIX,
+  REGEX_REPLACEMENT_FLAGS,
   rewritePrivilegedRequestHeaders,
 };
 export const NETWORK_MAIN_HOOK_SCRIPT_ID = "hackery-lab-network-hook-main";
@@ -66,7 +74,7 @@ export function createEmptyRule() {
     name: "New rule",
     enabled: true,
     priority: 100,
-    pageUrlPattern: "",
+    pageUrlPattern: "", //TODO: auto-fill with current page host and wildcards
     pageUrlPatternIsRegex: false,
     requestUrlPattern: "",
     requestUrlPatternIsRegex: false,
@@ -93,6 +101,8 @@ export function createEmptyRule() {
       mockStatus: 200,
       mockStatusText: "OK",
       mockBody: "",
+      cspSeed: "",
+      cspMode: "",
     },
   };
 }

@@ -133,6 +133,15 @@
               </select>
               <span class="field-hint">Only used when the on-load checkbox is on. Clicks always run immediately.</span>
             </label>
+            <label class="field is-hidden" id="sandbox-field">
+              <span class="field-label">Sandbox</span>
+              <select id="link-sandbox">
+                <option value="main">main — page JS (MAIN world)</option>
+                <option value="isolated">isolated — live DOM, no page globals</option>
+                <option value="readonly-dom">readonly-dom — isolated until clone exists</option>
+              </select>
+              <span class="field-hint">isolated and readonly-dom skip page CSP. readonly-dom still uses the live DOM (can write it).</span>
+            </label>
             <label class="field" id="link-code-field">
               <span class="field-label" id="link-code-label">Script</span>
               <textarea id="link-code" rows="5" spellcheck="false"></textarea>

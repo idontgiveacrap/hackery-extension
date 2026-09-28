@@ -21,7 +21,6 @@ import { openLinkBuilderWindow } from "./open-builder-window.js";
 import { loadParamValues } from "../lib/activate-link.js";
 import { getCatalogSnapshot } from "../lib/catalog-service.js";
 import { isCatalogChangedMessage } from "../lib/catalog-events.js";
-import { CSP_DISABLE_MINUTES } from "../lib/csp-disable.js";
 import {
   linkStableKey,
   loadCatalogOrder,
@@ -38,6 +37,7 @@ import {
   SLOT_LABELS,
 } from "../lib/link-shortcuts.js";
 import { MessageTypes } from "../lib/message-types.js";
+import { createNetworkArmControl } from "../lib/network-arm-control.js";
 import { StorageKeys } from "../lib/storage-keys.js";
 import { getActiveTab } from "../lib/tab-target.js";
 import { createUiMessage } from "../lib/ui-message.js";
@@ -55,10 +55,10 @@ const {
 const sectionTabsEl = document.getElementById("section-tabs");
 const linksEl = document.getElementById("links");
 const activeTabStatusEl = document.getElementById("active-tab-status");
-const cspDisableLabel = document.getElementById("csp-disable-label");
-const cspDisableCheckbox = document.getElementById("csp-disable-checkbox");
+const cspNonceLabel = document.getElementById("csp-nonce-label");
+const cspNonceCheckbox = document.getElementById("csp-nonce-checkbox");
 const injectOnLoadEnabledEl = document.getElementById("inject-on-load-enabled");
-const networkHooksEnabledEl = document.getElementById("network-hooks-enabled");
+const networkArmEl = document.getElementById("network-arm");
 const messageEl = document.getElementById("message");
 const addScriptBtn = document.getElementById("add-script-btn");
 const linkBuilderBtn = document.getElementById("link-builder-btn");
@@ -571,37 +571,55 @@ function setAddScriptExpanded(expanded) {
   }
 }
 
-async function syncCspDisableUi(tab) {
-  if (!cspDisableCheckbox || !cspDisableLabel) {
+async function syncCspNonceUi(tab) {
+  if (!cspNonceCheckbox || !cspNonceLabel) {
     return;
   }
 
-  const usable =
-    tab?.id != null &&
-    typeof tab.url === "string" &&
-    /^https?:\/\//i.test(tab.url);
+  const origin = originFromTabUrl(tab?.url);
+  const usable = Boolean(origin) && Number.isInteger(tab?.id) && tab.id >= 0;
 
-  cspDisableCheckbox.disabled = !usable;
-  cspDisableLabel.classList.toggle("is-disabled", !usable);
+  cspNonceCheckbox.disabled = !usable;
+  cspNonceLabel.classList.toggle("is-disabled", !usable);
+  // Say "this tab" and "every frame": the scope is the part people get wrong,
+  // and it now covers third-party frames, not just the site in the address bar.
+  cspNonceLabel.title = usable
+    ? `Let Hackery Lab scriptlets run in every frame of this tab (currently ${origin}), even where a Content-Security-Policy blocks scripts. ` +
+      "Adds a one-time nonce to each document's own policy; the rest of that policy stays enforced, so this is not Disable CSP. " +
+      "Covers cross-origin frames in this tab and no other tab. Turns off when the tab closes. Hard-reload (Ctrl+Shift+R) to apply."
+    : "Only available on http(s) pages — open a site tab first.";
 
   if (!usable) {
-    cspDisableCheckbox.checked = false;
+    cspNonceCheckbox.checked = false;
     return;
   }
 
   const response = await browser.runtime.sendMessage({
-    type: MessageTypes.GET_CSP_DISABLED,
+    type: MessageTypes.GET_CSP_NONCE,
     tabId: tab.id,
   });
-  cspDisableCheckbox.checked = Boolean(response?.disabled);
+  cspNonceCheckbox.checked = Boolean(response?.enabled);
 }
+
+function originFromTabUrl(url) {
+  try {
+    if (typeof url === "string" && /^https?:\/\//i.test(url)) {
+      return new URL(url).origin;
+    }
+  } catch {
+    // ignore
+  }
+  return "";
+}
+
+/** @type {{ refresh: () => Promise<void>, render: (snapshot: object) => void } | null} */
+let networkArm = null;
 
 async function initExtensionSettingsControls() {
   const response = await browser.runtime.sendMessage({
     type: MessageTypes.GET_EXTENSION_SETTINGS,
   });
   const settings = response?.settings || {
-    networkHooksEnabled: true,
     injectOnLoadEnabled: true,
   };
 
@@ -611,16 +629,6 @@ async function initExtensionSettingsControls() {
       await browser.runtime.sendMessage({
         type: MessageTypes.SET_EXTENSION_SETTINGS,
         settings: { injectOnLoadEnabled: injectOnLoadEnabledEl.checked },
-      });
-    });
-  }
-
-  if (networkHooksEnabledEl) {
-    networkHooksEnabledEl.checked = settings.networkHooksEnabled !== false;
-    networkHooksEnabledEl.addEventListener("change", async () => {
-      await browser.runtime.sendMessage({
-        type: MessageTypes.SET_EXTENSION_SETTINGS,
-        settings: { networkHooksEnabled: networkHooksEnabledEl.checked },
       });
     });
   }
@@ -645,13 +653,13 @@ async function syncActiveTabChrome() {
   syncAppliesToTabDots(linksEl, activeTab?.url || null);
 }
 
-async function initCspDisableControl() {
-  if (!cspDisableCheckbox) {
+async function initCspNonceControl() {
+  if (!cspNonceCheckbox) {
     return;
   }
 
   const syncFromActiveTab = async () => {
-    await syncCspDisableUi(await getActiveTab());
+    await syncCspNonceUi(await getActiveTab());
   };
 
   await syncFromActiveTab();
@@ -660,26 +668,25 @@ async function initCspDisableControl() {
     if (document.visibilityState === "visible") {
       void syncFromActiveTab();
       void syncActiveTabChrome();
+      void networkArm?.refresh();
     }
   });
 
-  cspDisableCheckbox.addEventListener("change", async () => {
+  cspNonceCheckbox.addEventListener("change", async () => {
     const tab = await getActiveTab();
-    if (!tab?.id || cspDisableCheckbox.disabled) {
+    if (!Number.isInteger(tab?.id) || tab.id < 0 || cspNonceCheckbox.disabled) {
       return;
     }
 
     await browser.runtime.sendMessage({
-      type: MessageTypes.SET_CSP_DISABLED,
+      type: MessageTypes.SET_CSP_NONCE,
       tabId: tab.id,
-      disabled: cspDisableCheckbox.checked,
+      enabled: cspNonceCheckbox.checked,
     });
 
-    if (cspDisableCheckbox.checked) {
-      // Ctrl+Shift+R, not a plain reload: a cached document can be replayed
-      // with its original policy without the headers passing through us.
+    if (cspNonceCheckbox.checked) {
       showMessage(
-        `CSP disabled for this tab and any tab it opens — hard-reload (Ctrl+Shift+R) to apply. Expires after ${CSP_DISABLE_MINUTES} minutes.`
+        "Scriptlets allowed to run in every frame of this tab — hard-reload (Ctrl+Shift+R) to apply. Each document keeps its own CSP apart from the added nonce."
       );
     } else {
       hideMessage();
@@ -687,9 +694,18 @@ async function initCspDisableControl() {
   });
 }
 
+async function initNetworkArmControl() {
+  if (!networkArmEl) {
+    return;
+  }
+  networkArm = createNetworkArmControl(networkArmEl);
+  await networkArm.refresh();
+}
+
 function initActiveTabListeners() {
   const refresh = () => {
     void syncActiveTabChrome();
+    void getActiveTab().then((tab) => syncCspNonceUi(tab));
   };
 
   if (browser.tabs?.onActivated) {
@@ -755,8 +771,12 @@ async function init() {
       void renderAll();
       return;
     }
-    if (message?.type === MessageTypes.CSP_DISABLED_CHANGED) {
-      void getActiveTab().then((tab) => syncCspDisableUi(tab));
+    if (message?.type === MessageTypes.CSP_NONCE_CHANGED) {
+      void getActiveTab().then((tab) => {
+        if (!Number.isInteger(tab?.id) || tab.id === message.tabId) {
+          void syncCspNonceUi(tab);
+        }
+      });
     }
   });
 
@@ -774,9 +794,14 @@ async function init() {
     console.error("Failed to load extension settings:", error);
   }
   try {
-    await initCspDisableControl();
+    await initCspNonceControl();
   } catch (error) {
-    console.error("Failed to init CSP control:", error);
+    console.error("Failed to init CSP nonce control:", error);
+  }
+  try {
+    await initNetworkArmControl();
+  } catch (error) {
+    console.error("Failed to init network arm control:", error);
   }
 }
 

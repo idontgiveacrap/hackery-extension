@@ -79,6 +79,10 @@ async function main() {
   });
   assert.equal(normalized.runAt, "document_end");
   assert.equal(normalized.exclude, "/skip");
+  assert.equal(
+    normalizeLeafNode({ name: "Iso", code: "1", sandbox: "isolated" }).sandbox,
+    "isolated"
+  );
   assert.equal(resolveRunAt(normalized), "document_end");
   assert.equal(resolveRunAt({ code: "1" }), "document_start");
 

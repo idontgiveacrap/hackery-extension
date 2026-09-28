@@ -4,11 +4,12 @@ import { createBackgroundMessageHandlers } from "./lib/background-messages.js";
 import { getCatalogSnapshot, invalidateCatalogSnapshot } from "./lib/catalog-service.js";
 import { CATALOG_CHANGED, isCatalogChangedMessage } from "./lib/catalog-events.js";
 import {
-  initCspDisable,
-  isCspDisabledForTab,
-  setCspDisabledForTab,
-  whenCspStateReady,
-} from "./lib/csp-disable.js";
+  initCspCompose,
+  isCspNonceTab,
+  setCspNonceForTab,
+  whenCspComposeReady,
+} from "./lib/csp-compose.js";
+import { initCspNonce } from "./lib/csp-nonce.js";
 import {
   collectScriptlets,
   getEditableValueDefs,
@@ -45,9 +46,11 @@ const HTTP_CONTENT_SCRIPT_MATCHES = ["http://*/*", "https://*/*"];
 
 const INJECT_SCRIPT_ID = "hackery-lab-on-load";
 const CONTEXT_TARGET_SCRIPT_ID = "hackery-lab-context-target";
+const LEGACY_INJECT_SCRIPT_ID = "complex-linker-on-load";
+const LEGACY_CONTEXT_TARGET_SCRIPT_ID = "complex-linker-context-target";
 const LEGACY_CONTENT_SCRIPT_IDS = [
-  "complex-linker-on-load",
-  "complex-linker-context-target",
+  LEGACY_INJECT_SCRIPT_ID,
+  LEGACY_CONTEXT_TARGET_SCRIPT_ID,
 ];
 const PARAM_PROMPT_PAGE = "prompt/params.html";
 const REFRESH_DEBOUNCE_MS = 300;
@@ -154,7 +157,10 @@ async function runInjectEntriesForTab(tabId, entries, frameId, meta = {}) {
             });
             continue;
           }
-          await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
+          await executeScriptletInTab(tabId, entry.code, entry.paramValues, {
+            frameId,
+            sandbox: entry.sandbox,
+          });
           await appendActivityLog({
             ...baseLog,
             outcome: "ran",
@@ -174,6 +180,7 @@ async function runInjectEntriesForTab(tabId, entries, frameId, meta = {}) {
         }
         const outcome = await executeScriptletWithBindings(tabId, entry.code, entry.paramValues, {
           frames: entry.frames,
+          sandbox: entry.sandbox,
         });
         await appendActivityLog({
           ...baseLog,
@@ -182,7 +189,10 @@ async function runInjectEntriesForTab(tabId, entries, frameId, meta = {}) {
         });
         continue;
       }
-      await executeScriptletInTab(tabId, entry.code, entry.paramValues, frameId);
+      await executeScriptletInTab(tabId, entry.code, entry.paramValues, {
+        frameId,
+        sandbox: entry.sandbox,
+      });
       await appendActivityLog({
         ...baseLog,
         outcome: "ran",
@@ -248,6 +258,7 @@ async function rebuildInjectCache() {
       runAt: resolveRunAt(node),
       code: node.code,
       paramValues: values,
+      sandbox: node.sandbox,
       ...(node.frames ? { frames: node.frames } : {}),
     });
   }
@@ -264,11 +275,9 @@ async function unregisterContentScriptIds(ids) {
 }
 
 async function syncInjectRegistration() {
-  await unregisterContentScriptIds([
-    INJECT_SCRIPT_ID,
-    CONTEXT_TARGET_SCRIPT_ID,
-    ...LEGACY_CONTENT_SCRIPT_IDS,
-  ]);
+  // Only the ids this function owns: unregistering the context-target script
+  // here raced the other sync and could leave the page with neither script.
+  await unregisterContentScriptIds([INJECT_SCRIPT_ID, LEGACY_INJECT_SCRIPT_ID]);
 
   if (!extensionSettings.injectOnLoadEnabled || injectEntries.length === 0) {
     return;
@@ -291,9 +300,8 @@ async function syncInjectRegistration() {
  */
 async function syncContextTargetRegistration() {
   await unregisterContentScriptIds([
-    INJECT_SCRIPT_ID,
     CONTEXT_TARGET_SCRIPT_ID,
-    ...LEGACY_CONTENT_SCRIPT_IDS,
+    LEGACY_CONTEXT_TARGET_SCRIPT_ID,
   ]);
 
   await browser.scripting.registerContentScripts([
@@ -353,8 +361,10 @@ async function refreshInjectState() {
   await reinjectOnLoadAllTabs();
 }
 
-async function executeScriptletInTab(tabId, code, paramValues = {}, frameId) {
-  return executeScriptletWithBindings(tabId, code, paramValues, { frameId });
+async function executeScriptletInTab(tabId, code, paramValues = {}, options = {}) {
+  const frameId = typeof options === "number" ? options : options.frameId;
+  const sandbox = typeof options === "object" ? options.sandbox : undefined;
+  return executeScriptletWithBindings(tabId, code, paramValues, { frameId, sandbox });
 }
 
 function scheduleRefreshInjectState() {
@@ -370,7 +380,7 @@ async function refreshActionBadge(tabId, url) {
   }
   const settings = await loadExtensionSettings();
   const networkMark =
-    settings.networkHooksEnabled !== false ? Network.getBadgeMark(tabId) : "";
+    settings.networkHooksEnabled === true ? Network.getBadgeMark(tabId) : "";
   let injectMark = "";
   if (settings.injectOnLoadEnabled && url && codesForUrl(url).length) {
     injectMark = "+";
@@ -390,7 +400,24 @@ function scheduleActiveTabBadgeRefresh() {
   });
 }
 
-async function initExtension() {
+/**
+ * Registered content scripts persist across sessions, and onInstalled fires
+ * alongside the top-level call on a reload, so a second concurrent run would
+ * re-register ids the first run had just claimed.
+ * @type {Promise<void> | null}
+ */
+let initExtensionRun = null;
+
+function initExtension() {
+  if (!initExtensionRun) {
+    initExtensionRun = runInitExtension().finally(() => {
+      initExtensionRun = null;
+    });
+  }
+  return initExtensionRun;
+}
+
+async function runInitExtension() {
   await Promise.all([
     refreshInjectState(),
     syncContextTargetRegistration()
@@ -421,10 +448,10 @@ const messageHandlers = {
     executeScriptletInTab,
     refreshInjectState,
     loadExtensionSettings,
-    isCspDisabledForTab,
-    setCspDisabledForTab,
-    whenCspStateReady,
     collectNetworkSettingsPayload: (next) => Network.collectSettingsPayload(next),
+    getCspNonceForTab: isCspNonceTab,
+    setCspNonceForTab,
+    whenCspComposeReady,
     appendActivityLog,
     getActivityLog,
     clearActivityLog,
@@ -487,7 +514,8 @@ browser.storage.onChanged.addListener((changes, area) => {
 
 // Top level, not inside initExtension: event pages only wake for listeners
 // registered during the background script's first synchronous run.
-initCspDisable();
+initCspCompose();
+initCspNonce();
 
 browser.tabs.onRemoved.addListener((tabId) => {
   Network.handleTabRemoved(tabId);

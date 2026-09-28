@@ -140,11 +140,13 @@ h1 {
 
 .header-toggles {
   display: flex;
-  flex-wrap: nowrap;
+  /* Wraps instead of overflowing: the labels are wordy and the sidebar is narrow. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
+  gap: 6px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .header-toggle,
@@ -171,14 +173,15 @@ h1 {
   cursor: pointer;
 }
 
-.csp-disable-label.is-disabled {
+.header-toggle.is-disabled {
   opacity: 0.55;
   cursor: default;
 }
 
-.csp-disable-label.is-disabled input {
+.header-toggle.is-disabled input {
   cursor: default;
 }
+
 
 .active-tab-status {
   margin: 4px 0 0;

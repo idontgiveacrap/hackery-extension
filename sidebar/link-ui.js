@@ -181,6 +181,7 @@ function buildInspectBody(snapshot) {
   appendInspectRow(grid, "match", snapshot.match ?? "(none)");
   appendInspectRow(grid, "exclude", snapshot.exclude ?? "(none)");
   appendInspectRow(grid, "runAt", snapshot.runAt);
+  appendInspectRow(grid, "sandbox", snapshot.sandbox);
   appendInspectRow(
     grid,
     "apply",

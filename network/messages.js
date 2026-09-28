@@ -1,3 +1,4 @@
+import { MessageTypes } from "../lib/message-types.js";
 import { respondAsync } from "../lib/message-router.js";
 import {
   defaultNetworkRulesState,
@@ -23,9 +24,14 @@ export function createNetworkMessageHandlers(ctx) {
     pageHookRules,
     validateNetworkLogToken,
     startTestRuleSession,
+    getNetworkArmSnapshot,
+    setNetworkArmed,
+    resetNetworkArmTimer,
+    loadNetworkHooksEnabled,
   } = ctx;
 
   const T = NetworkMessageTypes;
+  const HT = MessageTypes;
 
   return {
     [T.INSTALL_NETWORK_HOOK](_message, sender, sendResponse) {
@@ -132,6 +138,33 @@ export function createNetworkMessageHandlers(ctx) {
       }
       respondAsync(
         startTestRuleSession(ruleId, url).then((result) => ({ ok: true, ...result })),
+        sendResponse
+      );
+      return true;
+    },
+
+    [HT.GET_NETWORK_ARM](_message, _sender, sendResponse) {
+      respondAsync(
+        (async () => {
+          await loadNetworkHooksEnabled();
+          await loadNetworkRulesState();
+          return { ok: true, ...getNetworkArmSnapshot() };
+        })(),
+        sendResponse
+      );
+      return true;
+    },
+
+    [HT.SET_NETWORK_ARM](message, _sender, sendResponse) {
+      respondAsync(
+        (async () => {
+          if (message.reset) {
+            const arm = await resetNetworkArmTimer();
+            return { ok: true, ...arm };
+          }
+          await setNetworkArmed(Boolean(message.armed));
+          return { ok: true, ...getNetworkArmSnapshot() };
+        })(),
         sendResponse
       );
       return true;

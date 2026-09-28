@@ -17,6 +17,8 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 
 ## Usage
 
+In multiple places, this extension finds and replaces content. This can be done using an asterisk wildcard or regex. For replacements, you may use regex capture groups either way. For example a match string of "*text" can use the first capture group, which will be whatever matched *. If defining regex, you can define and use capture groups however you wish.
+
 1. Open a tab on the site the action targets (for any item with a regex `match` that matches the URL, the active tab will switch automatically).
 2. Open the **sidebar** via the toolbar button or **Ctrl+Period** (toggle).
 3. Choose an action (badge indicates type):
@@ -35,7 +37,13 @@ Package the folder as a `.zip` and submit to Mozilla Add-ons, or use Firefox Dev
 
 Drag links/folders/section tabs to reorder; order is saved and used for export.
 
-The sidebar shows the active tab origin. When a link has a `match` pattern, the extension prefers the active tab if it matches and is not excluded, otherwise the nearest matching tab in the current window.
+The sidebar shows the active tab origin. **Allow scriptlets (CSP)** lets scriptlets run in **every frame of the active tab** — cross-origin frames included — by adding a nonce to each document's own Content-Security-Policy. The rest of each policy stays enforced, no other tab is affected, and it stays on until you turn it off or close the tab (hard-reload to apply).
+
+Because it covers third-party frames, those frames lose CSP protection for as long as the tab is open. A frame origin loading for the first time *after* you tick the box can end up with no policy at all, logged as `CSP cache miss …` in the background console; reload once more to seed it.
+
+**Arm rules 10m** (sidebar header and the rules panel header are the same control) arms network rules; the countdown starts when at least one rule is enabled. While it counts down, the left half extends the timer and the right half disables the rules.
+
+When a link has a `match` pattern, the extension prefers the active tab if it matches and is not excluded, otherwise the nearest matching tab in the current window.
 
 Right-click a catalog row → **Inspect** for matching tabs, frames, cached origin, params, compiled URL/code, and skip reasons (sidebar popover plus `console.table` in the target page). Activations and on-load skips appear in DevTools → **Link log**.
 
@@ -290,9 +298,15 @@ On-load with `frames` set: that frame is injected only if it is in the target se
 
 In the bundled catalog, **Remove blur & overflow hidden** uses `nestingLevel: 1`; **Unmask passwords**, **Disable form validation**, **Give everything a background**, **Restore context menu**, and **Disable clipboard tampering** use `nestingLevel: -1` (all with `top: true`).
 
+### `sandbox` (scriptlets)
+
+Optional on `code` actions. Omitted / `"main"` injects in the page MAIN world. `"isolated"` and `"readonly-dom"` use `executeScript` `world: "ISOLATED"` (live DOM, no page globals, not subject to page CSP). `readonly-dom` is **not** a cloned document yet — it can still write the live DOM.
+
+MAIN scriptlets compile to an IIFE, then use the first method the page does not block: nonce `<script>` inline, nonce + blob URL, `new Function`, plain inline `<script>`, plain blob. A method whose scriptlet ran and threw stops the chain. The sidebar **Allow scriptlets (CSP)** checkbox rewrites the CSP of every document in that tab (DNR strip scoped by `tabIds` + one header with `'nonce-…'` per document). **Disable CSP** is a timed network-rule template that omits the header. Firefox MV3 cannot rewrite CSP in place (it merges); do not rely on in-place punch.
+
 ### Sections in the current catalog
 
-See `data/links.json` for the full list. `CONTEXT.md` has architecture detail, network rules, and deferred sandbox notes.
+See `data/links.json` for the full list. `CONTEXT.md` has architecture detail, network rules, and sandbox notes.
 
 ## Updating links from bookmarks
 

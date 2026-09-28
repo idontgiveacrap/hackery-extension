@@ -19,20 +19,27 @@ import {
 } from "./engine/network-rules-shared.js";
 import { configureNetworkWebRequest, syncNetworkWebRequest, rememberNetworkTabUrl, forgetNetworkTabUrl } from "./engine/network-webrequest.js";
 import { createNetworkMessageHandlers } from "./messages.js";
+import { MessageTypes } from "../lib/message-types.js";
+import { initCspCompose, syncCspDnrRules } from "../lib/csp-compose.js";
 import {
+  NETWORK_ARM_EXPIRES_AT_KEY,
+  NETWORK_ARM_MINUTES,
   NETWORK_HOOKS_ENABLED_KEY,
   NETWORK_RULES_KEY,
   NETWORK_RULES_LOG_KEY,
   NETWORK_SHARED_STATE_KEY,
   NETWORK_TAB_STATE_KEY,
 } from "./storage-keys.js";
+import { networkArmTimerActive } from "../lib/csp-compose-core.js";
 
 const TEST_RULE_TIMEOUT_MS = 8000;
 const REFRESH_DEBOUNCE_MS = 300;
+const NETWORK_ARM_ALARM = "network-rules-expire";
 
 let networkRulesState = defaultNetworkRulesState();
 let networkRulesCompiled = [];
-let networkHooksEnabled = true;
+let networkHooksEnabled = false;
+let networkArmExpiresAt = 0;
 let networkHookVersion = "";
 let networkLogToken = "";
 let networkSharedState = {};
@@ -47,13 +54,121 @@ let onRulesChanged = null;
 
 configureNetworkWebRequest({ appendNetworkRuleLog });
 
+async function loadNetworkArmExpiresAt() {
+  const stored = await browser.storage.session.get(NETWORK_ARM_EXPIRES_AT_KEY);
+  networkArmExpiresAt = Number(stored[NETWORK_ARM_EXPIRES_AT_KEY]) || 0;
+}
+
+async function persistArmExpiresAt() {
+  await browser.storage.session.set({
+    [NETWORK_ARM_EXPIRES_AT_KEY]: networkArmExpiresAt,
+  });
+}
+
+function enabledRuleCount() {
+  if (!networkRulesState.enabled) {
+    return 0;
+  }
+  return (networkRulesState.rules || []).filter((rule) => rule.enabled).length;
+}
+
+function getArmSnapshot() {
+  const count = enabledRuleCount();
+  const armed = networkHooksEnabled;
+  const waiting = armed && count === 0;
+  const timed = networkArmTimerActive(armed, count);
+  const expiresAt = timed ? networkArmExpiresAt : 0;
+  return {
+    armed,
+    waiting,
+    expiresAt,
+    enabledRuleCount: count,
+    minutes: NETWORK_ARM_MINUTES,
+  };
+}
+
+function broadcastArmChanged() {
+  browser.runtime
+    .sendMessage({
+      type: MessageTypes.NETWORK_ARM_CHANGED,
+      ...getArmSnapshot(),
+    })
+    .catch(() => {});
+}
+
+async function syncNetworkArmAlarm() {
+  await loadNetworkArmExpiresAt();
+  if (!networkArmTimerActive(networkHooksEnabled, enabledRuleCount())) {
+    networkArmExpiresAt = 0;
+    await persistArmExpiresAt();
+    await browser.alarms.clear(NETWORK_ARM_ALARM);
+    return;
+  }
+  const now = Date.now();
+  if (!networkArmExpiresAt || networkArmExpiresAt <= now) {
+    networkArmExpiresAt = now + NETWORK_ARM_MINUTES * 60 * 1000;
+    await persistArmExpiresAt();
+  }
+  await browser.alarms.create(NETWORK_ARM_ALARM, {
+    when: networkArmExpiresAt,
+  });
+}
+
+export async function setNetworkArmed(armed) {
+  networkHooksEnabled = Boolean(armed);
+  if (!armed) {
+    networkArmExpiresAt = 0;
+    await persistArmExpiresAt();
+    await browser.alarms.clear(NETWORK_ARM_ALARM);
+  }
+  await browser.storage.local.set({
+    [NETWORK_HOOKS_ENABLED_KEY]: networkHooksEnabled,
+  });
+  await refreshNetworkRulesState();
+  if (armed) {
+    await syncNetworkArmAlarm();
+  }
+  broadcastArmChanged();
+}
+
+export async function resetNetworkArmTimer() {
+  if (!networkArmTimerActive(networkHooksEnabled, enabledRuleCount())) {
+    return getArmSnapshot();
+  }
+  networkArmExpiresAt = Date.now() + NETWORK_ARM_MINUTES * 60 * 1000;
+  await persistArmExpiresAt();
+  await syncNetworkArmAlarm();
+  broadcastArmChanged();
+  return getArmSnapshot();
+}
+
+export function getNetworkArmSnapshot() {
+  return getArmSnapshot();
+}
+
+function initNetworkArmAlarm() {
+  browser.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== NETWORK_ARM_ALARM) {
+      return;
+    }
+    void setNetworkArmed(false);
+  });
+}
+
 async function loadNetworkHooksEnabled() {
   const stored = await browser.storage.local.get([
     NETWORK_HOOKS_ENABLED_KEY,
     NETWORK_SHARED_STATE_KEY,
   ]);
-  networkHooksEnabled = stored[NETWORK_HOOKS_ENABLED_KEY] !== false;
+  networkHooksEnabled = stored[NETWORK_HOOKS_ENABLED_KEY] === true;
   networkSharedState = stored[NETWORK_SHARED_STATE_KEY] || {};
+  await loadNetworkArmExpiresAt();
+  if (networkHooksEnabled && networkArmExpiresAt && networkArmExpiresAt <= Date.now()) {
+    networkHooksEnabled = false;
+    networkArmExpiresAt = 0;
+    await browser.storage.local.set({ [NETWORK_HOOKS_ENABLED_KEY]: false });
+    await persistArmExpiresAt();
+  }
   return networkHooksEnabled;
 }
 
@@ -257,7 +372,10 @@ export async function refreshNetworkRulesState() {
     networkHooksEnabled,
     networkSharedState
   );
+  await syncNetworkArmAlarm();
+  await syncCspDnrRules(networkRulesState, networkHooksEnabled);
   await syncNetworkHookRegistration();
+  broadcastArmChanged();
   if (typeof onRulesChanged === "function") {
     onRulesChanged();
   }
@@ -468,6 +586,8 @@ export function handleTabRemoved(tabId) {
 
 export async function init(options = {}) {
   onRulesChanged = options.onRulesChanged || null;
+  initNetworkArmAlarm();
+  initCspCompose();
   initNetworkNavigationHook();
   try {
     const tabs = await browser.tabs.query({ url: ["http://*/*", "https://*/*"] });
@@ -496,6 +616,10 @@ export function createMessageHandlers() {
     pageHookRules,
     validateNetworkLogToken,
     startTestRuleSession,
+    getNetworkArmSnapshot,
+    setNetworkArmed,
+    resetNetworkArmTimer,
+    loadNetworkHooksEnabled,
   });
 }
 
@@ -504,7 +628,8 @@ export function createMessageHandlers() {
  */
 export async function getSettingsFragment() {
   await loadNetworkHooksEnabled();
-  return { networkHooksEnabled };
+  await loadNetworkRulesState();
+  return { networkHooksEnabled, networkArm: getArmSnapshot() };
 }
 
 /**

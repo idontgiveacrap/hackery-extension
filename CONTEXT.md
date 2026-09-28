@@ -270,19 +270,121 @@ URL templates also support `{origin}` (target tab origin), independent of `navPa
 
 ### Schema
 
-Current catalog shape is schema **v3** (`code` / `url` / `open` / `match` / `params` / `navParams`). Overlay is a single `linksJsonOverlay` get — no on-read migrations, id backfill, or `customScripts` / `Custom` section remaps. Import requires this shape; pre-v3 stored data and imports are unsupported.
+Current catalog shape is schema **v3** (`code` / `url` / `open` / `match` / `params` / `navParams` / optional `sandbox`). Overlay is a single `linksJsonOverlay` get — no on-read migrations, id backfill, or `customScripts` / `Custom` section remaps. Import requires this shape; pre-v3 stored data and imports are unsupported.
 
-### Deferred: sandbox
+### Sandbox (`sandbox` on `code` actions)
 
-Future `sandbox` on `code` actions: `"main"` (default), `"isolated"`, `"readonly-dom"`. Not implemented.
+| Value | Eval world | Notes |
+|---|---|---|
+| omit / `"main"` | MAIN | Default. User source is `compileScriptletSource`, then the first method that is not blocked: nonce inline `<script>`, nonce+blob, `new Function(\`return ${source}\`)()`, plain inline `<script>`, plain blob |
+| `"isolated"` | ISOLATED | Live DOM, no page globals. Page CSP does not apply. |
+| `"readonly-dom"` | ISOLATED **for now** | Same as isolated. **Not read-only** — can still mutate the live DOM. Clone-iframe design below remains the real readonly mechanism. |
 
-| Value | Intent |
-|---|---|
-| `main` | Current behavior — MAIN-world `executeScript` against the live page |
-| `isolated` | Extension isolated world (no page globals); still the live DOM if the world can see it |
-| `readonly-dom` | Run against a **cloned DOM in its own document scope**, not the live tab |
+Builder exposes Sandbox for scriptlet types.
 
-#### `readonly-dom` design (planned)
+#### MAIN CSP: DNR strip + one listener-added policy
+
+Firefox MV3 **merges** any in-place CSP rewrite from `webRequest`, so [lib/csp-nonce.js](lib/csp-nonce.js) `punchCspPolicy` is only applied after DNR **remove** and a listener **add** of a single header ([network/engine/network-webrequest.js](network/engine/network-webrequest.js)).
+
+**Allow scriptlets (CSP) checkbox** (sidebar): scoped to the **tab**, not the origin (`cspNonceTabs` in `storage.session`, no timer). One DNR rule per enabled tab, `condition: { tabIds: [tabId], resourceTypes: ["main_frame", "sub_frame"] }` and **no** domain filter, so every document in the tab is covered — including origins that had not loaded when the box was ticked. The listener re-adds each document's own CSP + `'nonce-…'` even when network rules are disarmed. Hard-reload after toggling.
+
+**Why the tab and not the origin.** Frame targets in a scriptlet are chosen by depth and URL across origins, so an origin-keyed gate covered the address-bar origin and left every third-party frame enforcing while the checkbox read "on". DNR has no `frameId` condition, so the tab is the narrowest unit that can cover a frame tree; `tabIds` is valid only in session rules, which is what `updateSessionRules` installs. Listing the tab also excludes tabId `-1` for free. `tabs.onRemoved` drops the entry — tab ids are reused, and a stale one would strip CSP in whatever tab inherits the id.
+
+**Network rules:** the **Arm rules 10m** button arms hooks. It is one shared widget ([lib/network-arm-control.js](lib/network-arm-control.js) + `.css`) mounted in the sidebar header and in the rules panel header, where it replaced the old global **Enabled** checkbox; armed, it shows the countdown and splits into extend (left, green) and disable (right, red) halves under a label spanning both. Arming from the panel first flips `networkRules.enabled` back to true if an imported rule set disabled it, since no checkbox exposes that flag anymore.
+
+The 10-minute `alarms` countdown starts only when at least one rule is **enabled**. Empty list = armed/waiting, label reads `Ready`, no countdown, extend half disabled. Disabling the last enabled rule cancels the alarm and stays ready. Expiry or the disable half turns hooks off; nonce-origin DNR stays if that origin’s checkbox is on.
+
+Nuclear disable is the **Disable CSP** network-rule template (empty policy / omit header), so it is timer-gated. It also carries a `gi` regex **body replacement** that removes every `<meta http-equiv="Content-Security-Policy">` tag, including tags after `</head>` that the streaming head rewrite never sees; that puts matching documents on the buffering path, so they paint later. Isolation headers are not stripped unless a rule says so.
+
+**Do not touch CSP** when the origin nonce toggle is off and no armed CSP-touching rule matches. Regex / undigestible patterns fail closed (no DNR strip).
+
+Compose: seed original when nonce is on or `cspSeed === "original"`; apply matching CSP-touching rules in priority; empty / `cspMode: "disable"` → no header; else punch nonce unless the composed policy is empty. Skip nonce on bare `'unsafe-inline'` without nonce/hash.
+
+**Seeding is passive.** `onHeadersReceived` already runs for every document, so it caches each observed enforcing policy whether or not the toggle is on (`cacheCspPolicy` from `sitePolicy`, before compose). The seed therefore comes from the load you were already looking at, and no extra request is made. Three options were weighed:
+
+| Source | Cost | Correctness |
+| --- | --- | --- |
+| Passive observation (current) | zero requests | exactly the policy the browser enforced |
+| Cache only after enabling | zero requests | chicken-and-egg: the strip rule is in place, so there is nothing left to observe |
+| Duplicate background `fetch` (removed) | a second request per origin | worst: `Sec-Fetch-Dest: empty` and cookie-gated apps answer differently |
+
+The duplicate fetch is gone, along with `prefetchCspPolicy` and `cacheCspFromHeaders`. It was what made the toggle feel like a browser-wide stall, and it was also why Slack seeded empty — a background `fetch` is not a navigation. Responses with `tabId < 0` are no longer cached at all for the same reason.
+
+**Empty is never cached.** `cacheCspPolicy` ignores a blank value, so a stripped response cannot overwrite a policy already observed, and a missing entry stays distinguishable from a site that genuinely sends none.
+
+**Seed order:** a policy still on the response wins over the cache — DNR has not stripped that one.
+
+**Empty seed still gets a nonce.** When the toggle is on and no header policy composes, the document may still carry an enforcing `<meta>` CSP — the only policy on plenty of app shells. That case mints a nonce, records it for the frame, and punches the meta tag. With no policy anywhere the nonce attribute is ignored. Bailing without a nonce here made the toggle a silent no-op.
+
+`punchMetaCspTags` returns `{ html, reason }`, and the body filter writes that reason back over the header-stage one, so `getCspPunchReason` (Inspect, and the `nonce`/`diag` args in `scriptlet-inject.js`) distinguishes `meta-nonce-punched`, `no-csp-anywhere`, and refusals like `meta-unsafe-inline-without-nonce`. Compose logs one `CSP compose <url>: reason=… meta=… header=…` line per top-level document in a nonce tab.
+
+**One rejected DNR condition used to drop every strip rule** (`updateSessionRules` is all-or-nothing), which reads as "the toggle does nothing" while a CSP network rule still works. The sync now retries rule-by-rule and logs the rejected rule; a success line names the installed count and nonce tabs in the background console.
+
+`getCspPunchReason` records outcomes (`cache-miss`, `csp-rule-disable`, punch reasons).
+
+**Hydration race (pre-existing, now wider).** DNR session rules live in the browser and keep stripping while the event page is suspended, but `isCspNonceTab` reads an in-memory set that `whenCspComposeReady()` refills asynchronously. A document that lands between wake-up and hydration reads as "toggle off", so nothing re-adds the stripped policy. `initCspCompose()` starts hydration at module load to keep the window to a single storage read; closing it properly needs a promise-returning `onHeadersReceived`, which would also change when `filterResponseData` attaches.
+
+**Cache miss is fail-open, and the tab scope widens the window.** A frame origin appearing for the first time *after* the tab's strip rule was installed gets stripped with no policy restored — the document ends up with no CSP rather than original + nonce. Frames present on the pre-toggle load are already cached, which covers the ordinary flow (open page → tick box → hard-reload). The remaining cases log `CSP cache miss <url> (frame <id>): stripped with no policy restored` so it is not silent. Third-party frames in a nonce tab lose XSS protection for the life of the tab; that is the price of covering them, and it is why the scope is the tab and not the window.
+
+Does not punch meta-only documents that send no CSP header. Report-only CSP is left alone.
+
+Every composed document records a punch reason per tab+frame.
+
+#### Method fallback: blocked vs threw
+
+Each MAIN method reports `ran` separately from `ok`. `ran: false` (CSP refused the element, `EvalError` / "blocked by CSP", missing nonce) means no user code executed, so the next method is tried. `ran: true, ok: false` means the scriptlet itself threw and the chain **stops** — retrying would re-run partially-applied code.
+
+Plain (non-nonce) inline and blob are the last resorts: they only succeed where the policy already allows them (the `'unsafe-inline'` class the nonce punch skips).
+
+**The page's own nonce comes first.** When the background has no nonce for the frame, `evaluateCompiledInPage` reads one from an existing `script[nonce]` element. Nonce hiding blanks the content attribute, but the IDL property stays readable from page-realm script, which MAIN world is — so **a policy that already carries a nonce needs no header rewrite at all**. Slack is the worked example: `script-src 'self' … 'nonce-…' blob:` with no `'unsafe-inline'` or `'unsafe-eval'`. Without the fallback the chain reached eval and plain inline first, logging a CSP violation for each before succeeding on `blob:` — visible failure noise around an injection that worked. The sidebar toggle still earns its keep on policies with **no** nonce to borrow (`script-src 'self'`), where one has to be added to the policy itself.
+
+`attempts` records the nonce source (`extension`, `page`, `none`), so Inspect shows which path ran.
+
+**Identifying a policy is per frame; stripping one is not.** `onHeadersReceived` fires for every `main_frame` and `sub_frame` with `tabId`, `frameId`, `url`, and the response headers, so the background records `{ url, origin, type, sitePolicy, policy, meta }` per tab+frame (`rememberCspFramePolicy`) for every document — composed or untouched. `GET_FRAME_CSP` returns that alongside the nonce and punch reason, so a caller can tell a same-host frame that got a composed policy from a third-party frame still carrying its own.
+
+The strip is what cannot be per frame: DNR conditions have no `frameId`, so two same-host iframes in one tab cannot be gated apart, and an origin must be enabled *before* its document loads. DNR does support `condition.tabIds` on session rules, so per-**tab** scoping is available; the current nonce rules use `requestDomains` alone and therefore apply to that origin in every tab.
+
+**The nonce lives in the background realm.** `nonceByFrame` / `punchReasonByFrame` are module state filled by the `onHeadersReceived` listener. A sidebar or prompt run imports `scriptlet-inject.js` into its *own* realm, where those maps are permanently empty — so every sidebar-triggered injection passed `nonce: ""` and `diag: "not-seen"`, skipped both nonce methods, and fell through to eval/inline/blob no matter what the toggle said. Only background-triggered runs (commands, on-load, context menu, param prompt) ever saw a minted nonce. `ownsCspNonceState()` distinguishes the realms; non-owners fetch per-frame `{ nonce, diag }` over `GET_FRAME_CSP` before injecting.
+
+#### Firefox verdict: the in-place punch cannot work in MV3 (but DNR strip + re-add can)
+
+**Rewriting the server's policy is a dead end on this manifest version.** Measured on Firefox 153.0.4 against a local `script-src 'self'` fixture: the nonce *does* reach the document, but the original policy is enforced **alongside** it, and multiple policies AND together, so the un-punched copy still forbids inline, blob, and eval. Two policies were observed on one document:
+
+```
+default-src 'self'; script-src 'self'
+default-src 'self'; script-src 'self' 'nonce-yNd4j9j8VqiJWOJL5fdsTw'
+```
+
+Cause is deliberate Gecko behavior, not a bug here. `ResponseHeaderChanger.setHeader` in `toolkit/components/extensions/webrequest/WebRequest.sys.mjs` forces `merge = true` for any non-empty CSP value from a `manifest_version: 3` extension, and treats clearing the header as a no-op ([bug 1785821](https://bugzilla.mozilla.org/show_bug.cgi?id=1785821), [bug 1462989](https://bugzilla.mozilla.org/show_bug.cgi?id=1462989)). webRequest can therefore only make CSP **stricter** in MV3. There is no in-place rewrite and no relaxation.
+
+This is also why CSP rewrite uses **declarativeNetRequest** `modifyHeaders`/`remove`, the one path MV3 leaves open for dropping security headers.
+
+**DNR remove + webRequest re-add: the page's own policy is unrecoverable.** Firefox applies DNR response `modifyHeaders` in `ExtensionDNR.beforeWebRequestEvent`, and only afterwards builds the header snapshot passed to `onHeadersReceived` listeners (`WebRequest.sys.mjs` `runChannelListener`). A listener therefore cannot read a policy that DNR has already stripped, and DNR `set` takes a literal value so it cannot forward the server's policy into a scratch header either.
+
+**DNR strip + listener-added policy works, and is verified.** Measured on the fixture (Firefox 153.0.4) with a DNR `remove` for the fixture host plus a listener that *appends* a new `Content-Security-Policy` header. Adding a header the snapshot lacks takes the `!original` branch of `applyChanges`, and MV3's forced `merge = true` on a header-less channel is a plain set:
+
+```
+policies: [ "default-src 'self'; script-src 'self' 'nonce-<per-document>'" ]   one policy
+inline-with-policy-nonce   ran: true
+blob-with-policy-nonce     ran: true
+control-bogus-nonce        ran: false   CSP still enforced
+evalAllowed: false
+```
+
+So nonced `<script>` (inline *and* blob) executes in MAIN without `'unsafe-eval'`, and eval stays blocked — the original goal of the nonce plan.
+
+Two constraints remain for a real implementation:
+
+- **The replacement text has to come from somewhere.** DNR strips before any listener reads the response, so the page's own directives are unrecoverable from that request. Extension-initiated requests carry `tabId -1` and DNR conditions support `excludedTabIds`, so a strip rule that excludes `-1` lets the background `fetch` the URL itself to read the unstripped policy and cache it.
+- **Fail-open.** DNR keeps stripping while the event page is suspended, so a document loading in that window with no cached seed gets no CSP. Site+nonce is still stronger than the Disable CSP template (which omits the header on purpose).
+
+Consequences:
+
+- MAIN-world scriptlets on a CSP’d page use the **Nonce** origin toggle (site policy + nonce) or an armed CSP network-rule template. `new Function` still needs `'unsafe-eval'` or a disable template. In-place header punch is not used.
+- `sandbox: "isolated"` / `"readonly-dom"` are unaffected — ISOLATED world is not subject to page CSP.
+- A DNR `modifyHeaders`/`set` rule alone cannot help: rule values are literals, so it cannot generate a per-document nonce or preserve a policy it never read.
+
+#### `readonly-dom` clone (still planned)
 
 **Mechanism:** snapshot page markup into a dedicated iframe document with its own browsing context and JS realm. Preferred shape:
 
@@ -300,10 +402,10 @@ This is still not a hard security boundary against a hostile scriptlet if the ho
 
 **Lift CSP inside the clone (not the live page):**
 
-- Strip CSP **from the snapshot only** before load: remove `<meta http-equiv="Content-Security-Policy">` (and report-only variants) from serialized HTML; do not rely on the live tab’s Disable CSP toggle for this path.
+- Strip CSP **from the snapshot only** before load: remove `<meta http-equiv="Content-Security-Policy">` (and report-only variants) from serialized HTML; do not rely on the live tab’s nonce toggle or Disable CSP template for this path.
 - Prefer loading via `srcdoc` / controlled document so the clone does not inherit the page’s HTTP CSP headers.
 - Optionally set a permissive policy on the clone document only if a default opaque-frame policy still blocks `new Function` / inline evaluation — scoped to the iframe, never written back to the tab.
-- Live-page CSP disable (`csp-disable.js` header/meta strip) remains a separate feature for MAIN-world / page-policy cases.
+- Live-page CSP rewrite is `lib/csp-compose.js` + `network-webrequest.js` (nonce toggle and CSP-touching network rules).
 
 **Prevent interaction with the main page:**
 
@@ -318,9 +420,9 @@ This is still not a hard security boundary against a hostile scriptlet if the ho
 | Tear down the iframe after the run | No lingering frame with a copy of page HTML |
 | No `parent` / `top` helpers injected into the scriptlet bindings | Scriptlet sees clone `document` / `window` only |
 
-Scriptlets under `readonly-dom` **cannot** use live page globals. Those actions stay on `sandbox: "main"` (default).
+The clone iframe is not built yet. Until it is, `"readonly-dom"` uses ISOLATED eval on the **live** document (CSP-safe, no page globals, **not** write-proof).
 
-**Known fidelity limits:** closed shadow DOM, cross-origin iframe trees, framework instance state, and any object graph beyond markup are out of scope — HTML/DOM snapshot only.
+**Known fidelity limits (clone):** closed shadow DOM, cross-origin iframe trees, framework instance state, and any object graph beyond markup are out of scope — HTML/DOM snapshot only.
 
 ### Planned: userscripts + user CSS UI
 
@@ -371,19 +473,32 @@ Canonical export/import fields: `code`, `url`, `open`, `match`, `params`, `navPa
 
 **Rule visibility:** recent matches log to session storage (FIFO cap of 100); toolbar badge `●` on tabs where a rule fired; rules UI highlights the last matched rule. Log entries include `tabId` when known.
 
+**CSP rules log from compose.** `matchingSkippingCspHeaderEdits` removes CSP header edits before the header-rule pass, so a CSP-touching rule changes no header there and `applyHeaderRules` never logs it — it looked like the rule matched nothing even while it was disabling CSP on every document. `onHeadersReceived` therefore logs each matching CSP rule once the compose outcome is known, as `csp-disabled` (header omitted) or `csp-composed`.
+
 **Pattern compilation:** filter regexes compile once on rules refresh in the background and once per hook install in the page. Rule refresh is debounced (300ms).
+
+**Regex flags:** every regex-capable field carries its own flags — replacements in `flags`, filters in `<patternKey>Flags` (e.g. `pageUrlPatternFlags`). Selectable set is `g i m s u` (`REGEX_REPLACEMENT_FLAGS`); `y` is excluded because a sticky find anchors at `lastIndex`, and `d` only reports indices. Replacements default to `gi`, so a regex find replaces **every** match unless the user drops `g`. Filters default to `i` (`DEFAULT_FILTER_PATTERN_FLAGS`): they are read by `test()`, where `g` only moves `lastIndex`. `testCompiledPattern` resets `lastIndex` first, so a pattern saved or imported with `g` cannot match every other call. The UI control is `network/ui/regex-flags-select.js`, a checkbox combobox shown on every regex field and hidden while that field is in wildcard mode.
+
+**One field look.** Replacement **Find** inputs get the same compact CodeMirror treatment as the filter patterns (`regex` language + lint when the regex box is ticked, `plain` otherwise), attached per row after the row is in the DOM and destroyed when the row is removed. Every remaining single-line control in the rule form matches a compact `.cm-field` box — `4px 8px` padding, 12px/1.4 monospace, shared border/radius and focus ring — so plain inputs no longer read as a different widget next to an editor. The focus ring lives on `.cm-field:focus-within`, since the wrapper owns the border.
+
+**Replacements never truncate.** `applyStringReplacements` rewrites whole response bodies, so it returns the full string; trimming to fit would corrupt the document rather than miss a match. Literal finds run at any size. A regex find is skipped above `MAX_REGEX_REPLACE_INPUT_LENGTH` (8 MB) and reported through the engine's `onOversizedReplacement` (default `console.warn`), leaving the text untouched. `MAX_PATTERN_INPUT_LENGTH` (64 KB) still bounds filter **matching** only.
 
 **Scripts vs webRequest:** request/response scripts run in the page hook (fetch/XHR). webRequest applies declarative block/redirect/header/body actions only — Firefox MV3 CSP blocks `new Function()` in extension pages. A CSP-safe interpreter can be wired later in `network-webrequest.js`.
 
 **Hook reentrancy:** fetch/XHR triggered from inside a rule script skips other rules unless they set **`matchHookOriginated: true`**. A rule never matches its own request while its script is running.
 
-**Event-page listener registration:** `webRequest` listeners register at module load in `network-webrequest.js`, and `initCspDisable()` runs at the top level of `background.js`. Firefox only wakes an event page for listeners added during the background script's first synchronous run, so anything registered after an `await` stops firing once the background suspends.
+**Event-page listener registration:** `webRequest` listeners register at module load in `network-webrequest.js`, and `initCspCompose()` runs at the top level of `background.js`. Firefox only wakes an event page for listeners added during the background script's first synchronous run, so anything registered after an `await` stops firing once the background suspends.
 
-**Disable CSP (`lib/csp-disable.js`):** per-tab toggle in the sidebar, split across two mechanisms. DNR **session rules** (`tabIds` condition, `modifyHeaders`/`remove`) strip CSP and cross-origin isolation response headers — browser-held, so they apply while the event page is suspended. The **webRequest body filter** removes `<meta http-equiv="content-security-policy">`, which DNR cannot reach; a meta policy takes effect as the parser reads it and cannot be lifted later. The webRequest path also strips headers, so a network header rule cannot hand back a policy the DNR rule already removed. Requires a **hard reload** (`Ctrl+Shift+R`): a cached document can be replayed with its original policy without the headers passing through us.
+**CSP compose (`lib/csp-compose.js`, `lib/csp-disable.js` for meta strip):** DNR session rules strip enforcing `Content-Security-Policy` for nonce tabs (`tabIds`, all origins) and for armed DNR-representable CSP-touching rules (`excludedTabIds: [-1]`). The webRequest listener adds **one** composed policy (or none for disable). Meta tags are rewritten or stripped via `filterResponseData`. Isolation headers stay unless a network rule removes them. Hard-reload (`Ctrl+Shift+R`) is required for already-parsed documents.
 
-Scope and lifetime: applies to the tab plus any tab opened from it (`tabs.onCreated` + `openerTabId`), so `open: "tab"` actions do not land on a protected tab. Expires after the fixed `CSP_DISABLE_MINUTES` duration; activity does not renew it. Timers use `alarms`, not `setTimeout`, which dies with the event page. Any change the sidebar did not initiate broadcasts `CSP_DISABLED_CHANGED` so the checkbox does not go stale.
+Network arm uses `alarms` (`network-rules-expire`), not `setTimeout`. `NETWORK_ARM_CHANGED` / `CSP_NONCE_CHANGED` keep the sidebar in sync.
 
-`filterResponseData` must be called synchronously from the webRequest listener — a request id is only accepted while that request's listener is on the stack — so the body filter attaches before the disabled-tab set is known and decides in `onstop`, where async work is fine because the filter stays open until `close()`.
+`filterResponseData` must be called synchronously from the webRequest listener — a request id is only accepted while that request's listener is on the stack.
+
+**Compose cost.** Two things made the nonce toggle feel like a browser-wide stall, and both are load-bearing:
+
+- **No seed fetch at all.** Seeding is passive, from the `onHeadersReceived` pass every document already makes. The earlier once-per-origin `fetch` (deduped, body cancelled, `cache: "no-store"`) still meant a second request per origin and read the wrong policy on cookie-gated apps. `policyByUrl` is capped (`POLICY_URL_CACHE_MAX`); `policyByOrigin` carries the fallback.
+- **Meta-CSP editing streams.** An enforcing meta policy only applies inside `<head>`, so the filter holds back the head (`HEAD_END_PATTERN`, capped at `HEAD_SCAN_LIMIT`), rewrites it, then passes the rest through with a streaming `TextDecoder`. Only text **body rules** buffer the whole response; doing that for meta CSP blocked first paint on every document.
 
 **Hook idempotency:** re-install restores native `fetch`/XHR from the first install before re-wrapping, so in-tab re-inject does not stack wrappers.
 
@@ -442,7 +557,7 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 | `injectOnLoad` | Map of link key → true for on-load scriptlets |
 | `injectOnLoadEnabled` | Master switch for on-load injection (default true) |
 | `networkRules` | Network rules editor state (`enabled` + `rules[]`) |
-| `networkHooksEnabled` | Master switch for network hooks + webRequest rules (default true) |
+| `networkHooksEnabled` | Whether network rules are armed (default **false**; Arm rules 10m button) |
 | `networkSharedState` | Persistent key/value for network rule scripts (`ctx.sharedState`) |
 | `linksJsonOverlay` | Custom section links in `links.json` format (merged at load; no on-read writes) |
 | `activeSectionTab` | Last selected section tab |
@@ -456,13 +571,14 @@ Sidebar **Add action** panel quick-adds scriptlets or URLs. **Advanced…** open
 
 | Key | Purpose |
 |---|---|
+| `cspNonceTabs` | Tab ids with the CSP nonce toggle on (tab ids are meaningless after a restart, so never `storage.local`) |
 | `networkRulesLog` | Recent network rule matches (cap 100) |
 | `linkActivityLog` | Catalog activity ring buffer for DevTools Link log (cap 100) |
 | `networkTabState` | Per-tab objects for `ctx.tabState` keyed by tab id |
 | `linkBuilderPrefill` | Tab/context prefill for new builder links |
 | `linkParamPrompt` | Pending parameter prompt: `{ stableKey, windowId, rawValues }` |
 | `linkBuilderSection` | Default section for builder |
-| `cspDisabledTabs` | Tab ids with the sidebar "Disable CSP" toggle on |
+| `networkArmExpiresAt` | Epoch ms when the armed network session ends (0 if waiting / disarmed) |
 
 ## Conventions for changes
 

@@ -5,6 +5,7 @@
     <title>Network Rules</title>
     <link rel="stylesheet" href="../../lib/ui-theme.css" />
     <link rel="stylesheet" href="../../lib/ui-message.css" />
+    <link rel="stylesheet" href="../../lib/network-arm-control.css" />
     <link rel="stylesheet" href="rules.css" />
     <link rel="stylesheet" href="../../lib/codemirror-fields.css" />
   </head>
@@ -27,13 +28,10 @@
         </span>
       </h1>
       <p class="page-header-desc">
-        fetch/XHR + webRequest; re-injects on save. Global on/off: sidebar Network toggle.
+        fetch/XHR + webRequest; re-injects on save. Arm here or in the sidebar — the countdown starts once a rule is enabled.
       </p>
       <div class="page-header-actions">
-        <label class="toggle-field">
-          <input id="rules-enabled" type="checkbox" checked />
-          <span>Enabled</span>
-        </label>
+        <div id="network-arm"></div>
         <select id="rule-template-select" class="template-select" title="Insert a preset rule from network/data/network-rule-templates.json">
           <option value="">Insert from template…</option>
         </select>

@@ -1,4 +1,5 @@
 import {
+  attachCodeMirror,
   attachCodeMirrorAll,
   getFieldValue,
   setFieldLanguage,
@@ -6,14 +7,18 @@ import {
   setFieldValue,
 } from "../../lib/codemirror-fields.bundle.js";
 import { MessageTypes } from "../../lib/message-types.js";
+import { createNetworkArmControl } from "../../lib/network-arm-control.js";
 import { createUiMessage } from "../../lib/ui-message.js";
 import {
   createEmptyRule,
+  DEFAULT_FILTER_PATTERN_FLAGS,
+  DEFAULT_REGEX_REPLACEMENT_FLAGS,
   defaultNetworkRulesState,
   HTTP_METHODS,
   normalizeNetworkRulesState,
   WEBREQUEST_RESOURCE_TYPES,
 } from "../engine/network-rules-shared.js";
+import { createRegexFlagsSelect } from "./regex-flags-select.js";
 import {
   instantiateNetworkRuleTemplate,
   loadNetworkRuleTemplates,
@@ -32,7 +37,7 @@ const rulesListEl = document.getElementById("rules-list");
 const rulesLogEl = document.getElementById("rules-log");
 const ruleCountEl = document.getElementById("rule-count");
 const messageEl = document.getElementById("message");
-const rulesEnabledEl = document.getElementById("rules-enabled");
+const networkArmEl = document.getElementById("network-arm");
 const ruleFormEl = document.getElementById("rule-form");
 const editorTitleEl = document.getElementById("editor-title");
 const editorPanelEl = document.getElementById("editor-panel");
@@ -79,6 +84,7 @@ const PATTERN_FIELDS = [
   {
     key: "pageUrlPattern",
     flagKey: "pageUrlPatternIsRegex",
+    flagsKey: "pageUrlPatternFlags",
     element: document.getElementById("rule-page-url-pattern"),
     regexEl: document.getElementById("rule-page-url-pattern-regex"),
     placeholders: { wildcard: "*/app/*", regex: "/app/.*" },
@@ -86,6 +92,7 @@ const PATTERN_FIELDS = [
   {
     key: "requestUrlPattern",
     flagKey: "requestUrlPatternIsRegex",
+    flagsKey: "requestUrlPatternFlags",
     element: document.getElementById("rule-request-url-pattern"),
     regexEl: document.getElementById("rule-request-url-pattern-regex"),
     placeholders: {
@@ -96,6 +103,7 @@ const PATTERN_FIELDS = [
   {
     key: "requestBodyPattern",
     flagKey: "requestBodyPatternIsRegex",
+    flagsKey: "requestBodyPatternFlags",
     element: document.getElementById("rule-body-pattern"),
     regexEl: document.getElementById("rule-body-pattern-regex"),
     placeholders: {
@@ -106,6 +114,7 @@ const PATTERN_FIELDS = [
   {
     key: "requestContentTypePattern",
     flagKey: "requestContentTypePatternIsRegex",
+    flagsKey: "requestContentTypePatternFlags",
     element: document.getElementById("rule-content-type-pattern"),
     regexEl: document.getElementById("rule-content-type-pattern-regex"),
     placeholders: {
@@ -150,14 +159,27 @@ attachCodeMirrorAll({
   },
 });
 
+// Filter patterns are read by `test()`, so they default to `i` only: `g`
+// decides how many matches a replace performs and means nothing to a boolean.
+for (const field of PATTERN_FIELDS) {
+  field.flagsSelect = createRegexFlagsSelect({
+    fallback: DEFAULT_FILTER_PATTERN_FLAGS,
+    value: DEFAULT_FILTER_PATTERN_FLAGS,
+    visible: false,
+    filter: true,
+  });
+  field.regexEl.closest(".inline-check").after(field.flagsSelect.root);
+}
+
 /**
- * Sync a filter field's checkbox, placeholder, and CodeMirror language.
+ * Sync a filter field's checkbox, flags visibility, placeholder, and language.
  * @param {object} field Pattern field config.
  * @param {boolean} isRegex Whether the field is in regex mode.
  * @returns {void}
  */
 function applyPatternFieldMode(field, isRegex) {
   field.regexEl.checked = Boolean(isRegex);
+  field.flagsSelect.setVisible(Boolean(isRegex));
   const placeholder = isRegex
     ? field.placeholders.regex
     : field.placeholders.wildcard;
@@ -275,7 +297,20 @@ function readSelectedResourceTypes() {
   ].map((input) => input.value);
 }
 
-function createReplacementRow(replacement, options = {}) {
+/** Row element → its find editor and flags combobox. */
+const replacementRowFields = new WeakMap();
+
+/**
+ * Build one find/replace row and mount it in `container`.
+ *
+ * The row is appended before the editor is attached: `attachCodeMirror`
+ * inserts its wrapper next to the host input, which needs a parent first.
+ * @param {HTMLElement} container Replacement list element.
+ * @param {object} replacement Stored find/replace entry.
+ * @param {{ header?: boolean }} [options] Header rows carry a name column.
+ * @returns {HTMLElement} The mounted row.
+ */
+function createReplacementRow(container, replacement, options = {}) {
   const row = document.createElement("div");
   row.className = "replacement-row";
   if (options.header) {
@@ -315,12 +350,38 @@ function createReplacementRow(replacement, options = {}) {
   regexLabel.appendChild(document.createTextNode("regex"));
   row.appendChild(regexLabel);
 
+  const flagsSelect = createRegexFlagsSelect({
+    value: replacement.flags,
+    visible: regexInput.checked,
+  });
+  flagsSelect.root.dataset.field = "flags";
+  row.appendChild(flagsSelect.root);
+
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
   removeBtn.className = "secondary icon-btn";
   removeBtn.textContent = "×";
-  removeBtn.addEventListener("click", () => row.remove());
   row.appendChild(removeBtn);
+
+  container.appendChild(row);
+
+  // Same treatment as the filter pattern fields: regex mode highlights and
+  // lints the source, wildcard mode is plain text.
+  const findEditor = attachCodeMirror(findInput, {
+    language: regexInput.checked ? "regex" : "plain",
+    compact: true,
+    placeholder: "Find",
+  });
+  replacementRowFields.set(row, { findInput, findEditor, flagsSelect });
+
+  regexInput.addEventListener("change", () => {
+    flagsSelect.setVisible(regexInput.checked);
+    setFieldLanguage(findInput, regexInput.checked ? "regex" : "plain");
+  });
+  removeBtn.addEventListener("click", () => {
+    findEditor?.destroy();
+    row.remove();
+  });
 
   return row;
 }
@@ -354,9 +415,12 @@ function createSetHeaderRow(header) {
 }
 
 function renderReplacementList(container, replacements, { header = false } = {}) {
+  for (const row of container.querySelectorAll(".replacement-row")) {
+    replacementRowFields.get(row)?.findEditor?.destroy();
+  }
   container.replaceChildren();
   for (const replacement of replacements || []) {
-    container.appendChild(createReplacementRow(replacement, { header }));
+    createReplacementRow(container, replacement, { header });
   }
 }
 
@@ -369,10 +433,12 @@ function renderSetHeaders(container, headers) {
 
 function readReplacementList(container, { header = false } = {}) {
   return [...container.querySelectorAll(".replacement-row")].map((row) => {
+    const fields = replacementRowFields.get(row);
     const item = {
-      find: row.querySelector('[data-field="find"]')?.value ?? "",
+      find: fields ? getFieldValue(fields.findInput) : "",
       replace: row.querySelector('[data-field="replace"]')?.value ?? "",
       isRegex: row.querySelector('[data-field="isRegex"]')?.checked ?? false,
+      flags: fields?.flagsSelect.getValue() ?? DEFAULT_REGEX_REPLACEMENT_FLAGS,
     };
     if (header) {
       item.name = row.querySelector('[data-field="name"]')?.value ?? "";
@@ -465,6 +531,7 @@ function loadRuleIntoForm(rule) {
   ruleEnabledEl.checked = Boolean(rule.enabled);
   for (const field of PATTERN_FIELDS) {
     setFieldValue(field.element, rule[field.key] || "");
+    field.flagsSelect.setValue(rule[field.flagsKey]);
     applyPatternFieldMode(field, Boolean(rule[field.flagKey]));
   }
   renderMethodChecks(rule.methods);
@@ -801,7 +868,6 @@ async function importRulesFromFile(file) {
     rulesState = next;
     selectedRuleId = rulesState.rules[0]?.id || null;
     await persistRulesState();
-    rulesEnabledEl.checked = rulesState.enabled !== false;
     renderRulesList();
     loadRuleIntoForm(getSelectedRule());
     updateNetworkStatusDot();
@@ -889,6 +955,7 @@ function readRuleFromForm(existingRule) {
   for (const field of PATTERN_FIELDS) {
     patterns[field.key] = getFieldValue(field.element).trim();
     patterns[field.flagKey] = field.regexEl.checked;
+    patterns[field.flagsKey] = field.flagsSelect.getValue();
   }
 
   return {
@@ -918,6 +985,8 @@ function readRuleFromForm(existingRule) {
       mockStatus: Number(ruleMockStatusEl.value) || 200,
       mockStatusText: ruleMockStatusTextEl.value.trim() || "OK",
       mockBody: getFieldValue(ruleMockBodyEl),
+      cspSeed: existingRule?.modify?.cspSeed || "",
+      cspMode: existingRule?.modify?.cspMode || "",
     },
   };
 }
@@ -930,7 +999,6 @@ async function loadState() {
     );
     lastPersistedRulesSnapshot = JSON.stringify(rulesState);
   }
-  rulesEnabledEl.checked = rulesState.enabled !== false;
   renderRulesList();
 }
 
@@ -955,14 +1023,18 @@ async function updateNetworkStatusDot(logEntries = null) {
     type: HT.GET_EXTENSION_SETTINGS,
   });
   const hooksEnabled =
-    settingsResponse?.ok && settingsResponse.settings?.networkHooksEnabled !== false;
+    settingsResponse?.ok &&
+    (settingsResponse.settings?.networkArm?.armed === true ||
+      settingsResponse.settings?.networkHooksEnabled === true);
 
   networkStatusDotEl.classList.remove("is-disabled", "is-matched");
 
   if (!hooksEnabled || rulesState.enabled === false) {
     networkStatusDotEl.classList.add("is-disabled");
     setNetworkStatusText(
-      "Network hooks or this rule set is disabled. Check the sidebar Network toggle and the Enabled checkbox."
+      rulesState.enabled === false
+        ? "This rule set is disabled (imported that way). Click Arm rules to re-enable it and start the session."
+        : "Network rules are not armed. Click Arm rules to start a session."
     );
     return;
   }
@@ -1111,13 +1183,19 @@ if (importRulesBtn && importRulesFileEl) {
   });
 }
 
-rulesEnabledEl.addEventListener("change", async () => {
-  hideMessage();
-  rulesState.enabled = rulesEnabledEl.checked;
-  await persistRulesState();
-  updateNetworkStatusDot();
-  showMessage(rulesState.enabled ? "Rules enabled." : "Rules disabled.");
-});
+const networkArm = networkArmEl
+  ? createNetworkArmControl(networkArmEl, {
+      // The arm control is the only global switch left in this panel, so an
+      // imported rule set that disabled itself must not silently swallow it.
+      async beforeArm() {
+        if (rulesState.enabled === false) {
+          rulesState.enabled = true;
+          await persistRulesState();
+          renderRulesList();
+        }
+      },
+    })
+  : null;
 
 ruleActionEl.addEventListener("change", updateFormVisibility);
 phaseRequestEl.addEventListener("change", updateFormVisibility);
@@ -1226,11 +1304,16 @@ document.querySelectorAll("[data-add-replacement]").forEach((button) => {
         : key === "bodyReplacements"
           ? bodyReplacementsEl
           : headerReplacementsEl;
-    container.appendChild(
-      createReplacementRow(
-        { find: "", replace: "", isRegex: false, name: "" },
-        { header: key === "headerReplacements" }
-      )
+    createReplacementRow(
+      container,
+      {
+        find: "",
+        replace: "",
+        isRegex: false,
+        flags: DEFAULT_REGEX_REPLACEMENT_FLAGS,
+        name: "",
+      },
+      { header: key === "headerReplacements" }
     );
   });
 });
@@ -1262,7 +1345,6 @@ browser.storage.onChanged.addListener((changes, area) => {
     }
     rulesState = normalizeNetworkRulesState(incoming);
     lastPersistedRulesSnapshot = JSON.stringify(rulesState);
-    rulesEnabledEl.checked = rulesState.enabled !== false;
     renderRulesList();
     loadRuleIntoForm(getSelectedRule());
     updateNetworkStatusDot();
@@ -1271,6 +1353,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 
 loadRuleTemplates();
 loadState().then(() => {
+  void networkArm?.refresh();
   loadLog();
   defaultTestUrl().then((url) => {
     if (ruleTestUrlEl && url) {
