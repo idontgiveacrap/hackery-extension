@@ -1,6 +1,6 @@
 {
   "ServiceNow": {
-    "match": "^.*\\.service-now\\.com|.*\\.servicenow\\.com$",
+    "match": "^.*\\.(service-now\\.com|servicenowservices\\.com|servicenowprotected\\.(co\\.uk|com\\.au|eu))$",
     "children": [
       {
         "id": "40f67a57-3278-4df9-94d8-76b094bc9ea8",
@@ -29,6 +29,18 @@
           "g_list"
         ],
         "code": "var context = globalThis.gsft_main ?? globalThis;\nvar glideListClassRef = context.g_list; if (!glideListClassRef) { var ids = Array.from(document.querySelectorAll('div.list_v2')).map(function(div) { return div.id.replace(/_list$/, ''); }); glideListClassRef = new context.GlideList2(ids[0]) }\nvar checkedList = glideListClassRef.getChecked();\n//await navigator.clipboard.writeText(checkedList);\nconsole.log(\n    checkedList\n);"
+      },
+      {
+        "id": "0921812e-b480-4090-a22b-9a4093275e2f",
+        "name": "Australia broken studio fix",
+        "tooltip": "Double-reload may be necessary to allow for indexedDB to be cleared and rebuilt. As of 10/1/26 this is confirmed to solve Australia's broken studio page loading issue (blank pages and/or navigator). The issue appears to occur from serviceworkers interacting poorly with FF, resulting in corrupt indexedDB.",
+        "searchTags": [
+          "studio",
+          "blank page",
+          "indexedDB",
+          "Australia"
+        ],
+        "code": "(async () => {\n  sessionStorage.setItem(\"db-cleanup\", \"1\");\n  await Promise.all(\n    (await navigator.serviceWorker.getRegistrations())\n      .map(r => r.unregister())\n  );\n  for (const { name } of await indexedDB.databases())\n    if (name?.startsWith(\"vscode-\"))\n      indexedDB.deleteDatabase(name);\n  setTimeout(() => location.reload(), 1000);})();"
       },
       {
         "id": "c8f780eb-9db7-440f-89de-3585c2d1b956",
@@ -310,11 +322,34 @@
         "name": "App Log (current hour)",
         "searchTags": [
           "syslog",
+          "app log",
+          "log"
+        ],
+        "navParams": {
+          "minutes": {
+            "placeholder": "minutes ago",
+            "default": "60"
+          }
+        },
+        "open": "tab",
+        "url": "/syslog_app_scope_list.do?sysparm_query=sys_created_onBETWEENjavascript:new GlideDateTime(gs.minutesAgo({minutes}))@javascript:new GlideDateTime()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
+      },
+      {
+        "id": "22910600-154a-429a-8842-61b5583e468d",
+        "name": "System Log",
+        "searchTags": [
+          "syslog",
           "system log",
           "log"
         ],
+        "navParams": {
+          "minutes": {
+            "placeholder": "minutes ago",
+            "default": "5"
+          }
+        },
         "open": "tab",
-        "url": "/syslog_app_scope_list.do?sysparm_query=sys_created_onONCurrent hour@javascript:gs.beginningOfCurrentHour()@javascript:gs.endOfCurrentHour()^sys_scope%3Djavascript:gs.getCurrentApplicationId()"
+        "url": "/syslog_list.do?sysparm_query=sys_created_onBETWEENjavascript:new GlideDateTime(gs.minutesAgo({minutes}))@javascript:new GlideDateTime()"
       },
       {
         "id": "998c8654-9d0f-491e-bd5f-91260a21164c",
